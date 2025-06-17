@@ -57,6 +57,25 @@ exports.createDowntime = async (req, res) => {
   }
 };
 
+exports.updateDowntime = async (req, res) => {
+  try {
+    const data = req.body;
+
+    const updatedDowntime = await downtimeService.updateDowntime(data);
+
+    if (!updatedDowntime) {
+      return res.status(404).json({ message: "Downtime not found" });
+    }
+
+    return res.status(200).json(updatedDowntime);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res
+      .status(500)
+      .json({ message: "Downtime conflicts with existing entries" });
+  }
+};
+
 exports.getDowntimeOrder = async (req, res) => {
   try {
     const downtimeOrder = await downtimeService.getDowntimeOrder();
@@ -66,6 +85,23 @@ exports.getDowntimeOrder = async (req, res) => {
     }
 
     return res.status(200).json(downtimeOrder);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.deleteDowntime = async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const deletedDowntime = await downtimeService.deleteDowntime(id);
+
+    if (!deletedDowntime) {
+      return res.status(404).json({ message: "Downtime not found" });
+    }
+
+    return res.status(200).json(deletedDowntime);
   } catch (error) {
     console.error("Controller error:", error);
     return res.status(500).json({ message: "Internal server error" });

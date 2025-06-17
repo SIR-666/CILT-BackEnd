@@ -101,6 +101,67 @@ async function createDowntime(order) {
   }
 }
 
+async function updateDowntime(order) {
+  try {
+    const pool = await getPool();
+
+    // Cek konflik waktu (selain id yang sedang diupdate)
+    const existingDowntime = await pool
+      .request()
+      .input("plant", order.plant)
+      .input("shift", order.shift)
+      .input("line", order.line)
+      .input("newDate", order.date)
+      .input("minutes", order.minutes)
+      .input("id", order.id).query(`
+        SELECT * FROM [tb_CILT_downtime]
+        WHERE plant = @plant
+          AND shift = @shift
+          AND line = @line
+          AND id != @id
+          AND [date] < DATEADD(MINUTE, CAST(@minutes AS INT), @newDate)
+          AND DATEADD(MINUTE, CAST([minutes] AS INT), [date]) > @newDate
+      `);
+
+    if (existingDowntime.recordset.length > 0) {
+      throw new Error("Downtime conflicts with existing entries.");
+    }
+
+    // Lakukan update
+    await pool
+      .request()
+      .input("id", order.id)
+      .input("plant", order.plant)
+      .input("date", order.date)
+      .input("shift", order.shift)
+      .input("line", order.line)
+      .input("downtime_category", order.downtime_category)
+      .input("mesin", order.mesin)
+      .input("jenis", order.jenis)
+      .input("keterangan", order.keterangan)
+      .input("minutes", order.minutes).query(`
+        UPDATE tb_CILT_downtime
+        SET
+          plant = @plant,
+          date = @date,
+          shift = @shift,
+          line = @line,
+          downtime_category = @downtime_category,
+          mesin = @mesin,
+          jenis = @jenis,
+          keterangan = @keterangan,
+          minutes = @minutes
+        WHERE id = @id
+      `);
+
+    console.log("Record updated with id: ", order.id);
+    return order;
+  } catch (err) {
+    console.error("Error updating CILT downtime record:", err);
+    throw err;
+  }
+}
+
 async function getDowntimeOrder() {
   try {
     const pool = await getPool();
@@ -128,6 +189,8 @@ async function getDowntimeOrder() {
 
       grouped[key].data.push({
         id: item.id,
+        plant: item.Plant,
+        line: item.Line,
         start_time: item.Date,
         end_time: new Date(
           new Date(item.Date).getTime() + parseInt(item.Minutes) * 60000
@@ -158,9 +221,32 @@ async function getDowntimeOrder() {
   }
 }
 
+async function deleteDowntime(id) {
+  try {
+    const pool = await getPool();
+
+    const result = await pool.request().input("id", id).query(`
+        DELETE FROM tb_CILT_downtime
+        WHERE id = @id
+      `);
+
+    if (result.rowsAffected[0] === 0) {
+      throw new Error(`No record found with id ${id}`);
+    }
+
+    console.log(`Record with id ${id} deleted successfully.`);
+    return { success: true, id };
+  } catch (err) {
+    console.error("Error deleting downtime record:", err);
+    throw err;
+  }
+}
+
 module.exports = {
   getDowntimeList,
   getDowntimeMaster,
   createDowntime,
+  updateDowntime,
   getDowntimeOrder,
+  deleteDowntime,
 };
