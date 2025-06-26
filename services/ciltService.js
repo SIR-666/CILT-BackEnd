@@ -5,64 +5,99 @@ const getPool = require("../config/pool");
 async function createCILT(order) {
   try {
     const pool = await getPool();
-    const result = await pool
+
+    // 1. Check if processOrder exists
+    const checkResult = await pool
+      .request()
+      .input("processOrder", order.processOrder)
+      .query(
+        "SELECT id FROM tb_CILT WHERE processOrder = @processOrder AND packageType != 'PERFORMA RED AND GREEN'"
+      );
+
+    const exists = checkResult.recordset.length > 0;
+
+    // 2. If exists, do UPDATE
+    if (exists) {
+      const id = checkResult.recordset[0].id;
+
+      await pool
+        .request()
+        .input("id", id)
+        .input("packageType", order.packageType)
+        .input("plant", order.plant)
+        .input("line", order.line)
+        .input("date", order.date || null)
+        .input("shift", order.shift)
+        .input("product", order.product)
+        .input("machine", order.machine)
+        .input("batch", order.batch)
+        .input("remarks", order.remarks)
+        .input("inspectionData", JSON.stringify(order.inspectionData))
+        .input("formOpenTime", order.formOpenTime)
+        .input("submitTime", order.submitTime)
+        .input("data1", order.data1)
+        .input("data2", order.data2)
+        .input("status", order.status).query(`
+          UPDATE tb_CILT SET
+            packageType = @packageType,
+            plant = @plant,
+            line = @line,
+            date = @date,
+            shift = @shift,
+            product = @product,
+            machine = @machine,
+            batch = @batch,
+            remarks = @remarks,
+            inspectionData = @inspectionData,
+            formOpenTime = @formOpenTime,
+            submitTime = @submitTime,
+            data1 = @data1,
+            data2 = @data2,
+            status = @status
+          WHERE id = @id
+        `);
+
+      console.log("Record updated with id:", id);
+      return { ...order, id };
+    }
+
+    // 3. Else, INSERT new
+    const insertResult = await pool
       .request()
       .input("processOrder", order.processOrder)
       .input("packageType", order.packageType)
       .input("plant", order.plant)
       .input("line", order.line)
-      .input("date", order.date ? order.date : null) // Use DATETIME
+      .input("date", order.date || null)
       .input("shift", order.shift)
       .input("product", order.product)
       .input("machine", order.machine)
       .input("batch", order.batch)
       .input("remarks", order.remarks)
-      .input("inspectionData", JSON.stringify(order.inspectionData)) // Store JSON as string
-      .input("formOpenTime", order.formOpenTime) // Use DATETIME
-      .input("submitTime", order.submitTime) // Use DATETIME
+      .input("inspectionData", JSON.stringify(order.inspectionData))
+      .input("formOpenTime", order.formOpenTime)
+      .input("submitTime", order.submitTime)
       .input("data1", order.data1)
       .input("data2", order.data2)
-      .input("status", order.status).query(`INSERT INTO tb_CILT (
-                processOrder,
-                packageType,
-                plant,
-                line,
-                date,
-                shift,
-                product,
-                machine,
-                batch,
-                remarks,
-                inspectionData,
-                formOpenTime,
-                submitTime,
-                data1,
-                data2,
-                status
-              ) OUTPUT inserted.id VALUES (
-                @processOrder,
-                @packageType,
-                @plant,
-                @line,
-                @date,
-                @shift,
-                @product,
-                @machine,
-                @batch,
-                @remarks,
-                @inspectionData,
-                @formOpenTime,
-                @submitTime,
-                @data1,
-                @data2,
-                @status
-              );`);
+      .input("status", order.status).query(`
+        INSERT INTO tb_CILT (
+          processOrder, packageType, plant, line, date, shift,
+          product, machine, batch, remarks, inspectionData,
+          formOpenTime, submitTime, data1, data2, status
+        ) OUTPUT inserted.id
+        VALUES (
+          @processOrder, @packageType, @plant, @line, @date, @shift,
+          @product, @machine, @batch, @remarks, @inspectionData,
+          @formOpenTime, @submitTime, @data1, @data2, @status
+        )
+      `);
 
-    const newOrder = { ...order, id: result.recordset[0].id };
-    console.log("New record created with id: ", newOrder.id);
-    return newOrder;
+    const newId = insertResult.recordset[0].id;
+    console.log("New record inserted with id:", newId);
+    return { ...order, id: newId };
   } catch (err) {
-    console.error("Error creating CILT record:", err);
+    console.error("Error creating/updating CILT record:", err);
+    throw err;
   }
 }
 
@@ -261,6 +296,31 @@ async function getSKU(plant) {
   }
 }
 
+async function checkCiltByProcessOrder(processOrder) {
+  try {
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("processOrder", sql.VarChar, processOrder)
+      .query("SELECT * FROM tb_CILT WHERE processOrder = @processOrder");
+
+    if (result.recordset.length > 0) {
+      return {
+        exists: true,
+        data: result.recordset[0],
+      };
+    } else {
+      return {
+        exists: false,
+        data: null,
+      };
+    }
+  } catch (error) {
+    console.error("Error checking CILT by processOrder:", error);
+    throw error;
+  }
+}
+
 module.exports = {
   createCILT,
   getCILT,
@@ -270,4 +330,5 @@ module.exports = {
   checkDraft,
   getReportCILTAll,
   getSKU,
+  checkCiltByProcessOrder,
 };

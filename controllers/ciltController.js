@@ -144,3 +144,19 @@ exports.getReportCILTAll = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+exports.getCILTByProcessOrder = async (req, res) => {
+  try {
+    const processOrder = req.query.processOrder;
+    const order = await ciltService.checkCiltByProcessOrder(processOrder);
+
+    if (!order) {
+      return res.status(404).json({ message: "CILT record not found" });
+    }
+
+    return res.status(200).json(order);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};

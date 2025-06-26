@@ -38,6 +38,24 @@ async function getDowntimeMaster(line, category, mesin) {
   }
 }
 
+async function getDowntimeMasterByLine(line) {
+  try {
+    const pool = await getPool();
+    const downtime = await pool
+      .request()
+      .input("line", sql.VarChar, line)
+      .query(
+        `SELECT * FROM [DowntimeMaster]
+         WHERE line = @line`
+      );
+
+    return downtime.recordsets;
+  } catch (error) {
+    console.error("Error in getDowntimeMasterByLine:", error);
+    return [];
+  }
+}
+
 async function createDowntime(order) {
   try {
     const pool = await getPool();
@@ -221,6 +239,32 @@ async function getDowntimeOrder() {
   }
 }
 
+async function getDowntimeData(plant, line, date, shift) {
+  try {
+    const pool = await getPool();
+    console.log(plant, line, date, shift);
+    const downtime = await pool
+      .request()
+      .input("plant", sql.VarChar, plant)
+      .input("line", sql.VarChar, line)
+      .input("date", sql.VarChar, date) // format: 'YYYY-MM-DD'
+      .input("shift", sql.VarChar, shift)
+      .query(
+        `SELECT * FROM [tb_CILT_downtime]
+          WHERE plant = @plant
+          AND line = @line
+          AND CAST([date] AS DATE) = CAST(@date AS DATE)
+          AND shift = @shift
+          order by [date] asc`
+      );
+
+    return downtime.recordsets;
+  } catch (error) {
+    console.error("Error in get downtime data:", error);
+    return [];
+  }
+}
+
 async function deleteDowntime(id) {
   try {
     const pool = await getPool();
@@ -245,8 +289,10 @@ async function deleteDowntime(id) {
 module.exports = {
   getDowntimeList,
   getDowntimeMaster,
+  getDowntimeMasterByLine,
   createDowntime,
   updateDowntime,
   getDowntimeOrder,
+  getDowntimeData,
   deleteDowntime,
 };

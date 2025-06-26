@@ -28,3 +28,12 @@ app.use("/mastercilt", ciltMasterRoutes);
 
 const downtimeRoutes = require("./routes/downtimeRoutes");
 app.use("/", downtimeRoutes);
+
+const ciltPackageMasterRoutes = require("./routes/ciltPackageMasterRoutes");
+app.use("/package-master", ciltPackageMasterRoutes);
+
+const ciltGnrMasterRoutes = require("./routes/ciltGnrMasterRoutes");
+app.use("/gnr-master", ciltGnrMasterRoutes);
+
+const ciltChecklistMasterRoutes = require("./routes/ciltChecklistMasterRoutes");
+app.use("/checklist-master", ciltChecklistMasterRoutes);

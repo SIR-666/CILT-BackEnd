@@ -38,6 +38,23 @@ exports.getDowntimeMaster = async (req, res) => {
   }
 };
 
+exports.getDowntimeMasterByLine = async (req, res) => {
+  try {
+    const line = req.query.line;
+
+    const downtimeMaster = await downtimeService.getDowntimeMasterByLine(line);
+
+    if (!downtimeMaster) {
+      return res.status(500).json({ message: "Failed to get downtime master" });
+    }
+
+    return res.status(200).json(downtimeMaster[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Failed to get downtime master" });
+  }
+};
+
 exports.createDowntime = async (req, res) => {
   try {
     const data = req.body;
@@ -85,6 +102,31 @@ exports.getDowntimeOrder = async (req, res) => {
     }
 
     return res.status(200).json(downtimeOrder);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.getDowntimeData = async (req, res) => {
+  try {
+    const plant = req.query.plant;
+    const line = req.query.line;
+    const date = req.query.date;
+    const shift = req.query.shift;
+
+    const downtimeData = await downtimeService.getDowntimeData(
+      plant,
+      line,
+      date,
+      shift
+    );
+
+    if (!downtimeData) {
+      return res.status(404).json({ message: "Downtime not found" });
+    }
+
+    return res.status(200).json(downtimeData[0]);
   } catch (error) {
     console.error("Controller error:", error);
     return res.status(500).json({ message: "Internal server error" });
