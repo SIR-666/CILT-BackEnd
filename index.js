@@ -37,3 +37,6 @@ app.use("/gnr-master", ciltGnrMasterRoutes);
 
 const ciltChecklistMasterRoutes = require("./routes/ciltChecklistMasterRoutes");
 app.use("/checklist-master", ciltChecklistMasterRoutes);
+
+const cipRoutes = require("./routes/cipRoutes");
+app.use("/cip-report", cipRoutes);
