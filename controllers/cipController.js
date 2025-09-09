@@ -58,23 +58,23 @@ exports.createCIPReport = async (req, res) => {
     // Validate required fields
     if (!cipData.processOrder || !cipData.plant || !cipData.line || !cipData.cipType) {
       console.error("Missing required fields");
-      return res.status(400).json({ 
-        message: "Missing required fields: processOrder, plant, line, cipType" 
+      return res.status(400).json({
+        message: "Missing required fields: processOrder, plant, line, cipType"
       });
     }
 
     // Additional validation for posisi and operator
     if (!cipData.operator) {
       console.error("Operator is required");
-      return res.status(400).json({ 
-        message: "Operator is required" 
+      return res.status(400).json({
+        message: "Operator is required"
       });
     }
 
     if (!cipData.posisi) {
       console.error("Posisi is required");
-      return res.status(400).json({ 
-        message: "Posisi is required" 
+      return res.status(400).json({
+        message: "Posisi is required"
       });
     }
 
@@ -88,28 +88,28 @@ exports.createCIPReport = async (req, res) => {
         // Only validate flowRateD for LINE D
         if (!cipData.flowRateD) {
           console.error("Flow Rate D is required for LINE D");
-          return res.status(400).json({ 
-            message: "Flow Rate D is required for LINE D" 
+          return res.status(400).json({
+            message: "Flow Rate D is required for LINE D"
           });
         }
 
         if (parseFloat(cipData.flowRateD) < 6000) {
-          return res.status(400).json({ 
-            message: "Flow Rate D must be minimum 6000 L/H" 
+          return res.status(400).json({
+            message: "Flow Rate D must be minimum 6000 L/H"
           });
         }
       } else if (cipData.line === 'LINE B' || cipData.line === 'LINE C') {
         // Only validate flowRateBC for LINE B/C
         if (!cipData.flowRateBC) {
           console.error("Flow Rate B,C is required for LINE B/C");
-          return res.status(400).json({ 
-            message: "Flow Rate B,C is required for LINE B/C" 
+          return res.status(400).json({
+            message: "Flow Rate B,C is required for LINE B/C"
           });
         }
 
         if (parseFloat(cipData.flowRateBC) < 9000) {
-          return res.status(400).json({ 
-            message: "Flow Rate B,C must be minimum 9000 L/H" 
+          return res.status(400).json({
+            message: "Flow Rate B,C must be minimum 9000 L/H"
           });
         }
       }
@@ -117,16 +117,16 @@ exports.createCIPReport = async (req, res) => {
       // Validate valve positions
       if (!cipData.valvePositions) {
         console.error("Valve positions are required for BCD lines");
-        return res.status(400).json({ 
-          message: "Valve positions are required for BCD lines" 
+        return res.status(400).json({
+          message: "Valve positions are required for BCD lines"
         });
       }
     } else {
       // Validate LINE A specific fields
       if (!cipData.flowRate) {
         console.error("Flow rate is required for LINE A");
-        return res.status(400).json({ 
-          message: "Flow rate is required" 
+        return res.status(400).json({
+          message: "Flow rate is required"
         });
       }
     }
@@ -170,7 +170,7 @@ exports.createCIPReport = async (req, res) => {
       code: error.code
     });
     console.error("=== END ERROR ===");
-    
+
     // Return more detailed error in development
     const errorResponse = {
       message: "Internal server error",
@@ -180,7 +180,7 @@ exports.createCIPReport = async (req, res) => {
         details: error.originalError ? error.originalError.message : undefined
       } : undefined
     };
-    
+
     return res.status(500).json(errorResponse);
   }
 };
@@ -202,15 +202,15 @@ exports.updateCIPReport = async (req, res) => {
       if (updateData.line === 'LINE D') {
         // Validate flowRateD for LINE D
         if (updateData.flowRateD !== undefined && parseFloat(updateData.flowRateD) < 6000) {
-          return res.status(400).json({ 
-            message: "Flow Rate D must be minimum 6000 L/H" 
+          return res.status(400).json({
+            message: "Flow Rate D must be minimum 6000 L/H"
           });
         }
       } else if (updateData.line === 'LINE B' || updateData.line === 'LINE C') {
         // Validate flowRateBC for LINE B/C
         if (updateData.flowRateBC !== undefined && parseFloat(updateData.flowRateBC) < 9000) {
-          return res.status(400).json({ 
-            message: "Flow Rate B,C must be minimum 9000 L/H" 
+          return res.status(400).json({
+            message: "Flow Rate B,C must be minimum 9000 L/H"
           });
         }
       }
@@ -257,7 +257,7 @@ exports.updateCIPReport = async (req, res) => {
       code: error.code
     });
     console.error("=== END ERROR ===");
-    
+
     const errorResponse = {
       message: "Internal server error",
       error: process.env.NODE_ENV === 'development' ? {
@@ -266,7 +266,7 @@ exports.updateCIPReport = async (req, res) => {
         details: error.originalError ? error.originalError.message : undefined
       } : undefined
     };
-    
+
     return res.status(500).json(errorResponse);
   }
 };
@@ -274,7 +274,7 @@ exports.updateCIPReport = async (req, res) => {
 exports.deleteCIPReport = async (req, res) => {
   try {
     const id = req.params.id;
-    
+
     const deleted = await cipService.deleteCIPReport(id);
 
     if (!deleted) {
@@ -292,7 +292,12 @@ exports.deleteCIPReport = async (req, res) => {
 
 exports.getCIPTypes = async (req, res) => {
   try {
-    const cipTypes = await cipService.getCIPTypes();
+    const cipTypes = [
+      { id: 1, name: "CIP 1", value: "CIP_1", description: "CIP Type 1 cleaning process" },
+      { id: 2, name: "CIP 2", value: "CIP_2", description: "CIP Type 2 cleaning process" },
+      { id: 3, name: "CIP 3", value: "CIP_3", description: "CIP Type 3 cleaning process" },
+    ];
+
     return res.status(200).json(cipTypes);
   } catch (error) {
     console.error("Controller error:", error);

@@ -1091,7 +1091,9 @@ async function deleteCIPReport(id) {
 async function getCIPTypes() {
   try {
     const cipTypes = [
-      { id: 1, name: "CIP KITCHEN", description: "Kitchen CIP cleaning process" }
+      { id: 1, name: "CIP 1", value: "CIP_1", description: "CIP Type 1 cleaning process" },
+      { id: 2, name: "CIP 2", value: "CIP_2", description: "CIP Type 2 cleaning process" },
+      { id: 3, name: "CIP 3", value: "CIP_3", description: "CIP Type 3 cleaning process" },
     ];
 
     return cipTypes;
