@@ -1,5 +1,5 @@
 const validateCIPData = (cipData) => {
-    const errors = [];
+    const warnings = [];
     
     // Check if this is a BCD line
     const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(cipData.line);
@@ -7,7 +7,7 @@ const validateCIPData = (cipData) => {
     // Validate CIP steps (same for all lines)
     if (cipData.steps && cipData.steps.length > 0) {
         cipData.steps.forEach((step, index) => {
-            // Validate temperature is within min/max bounds
+            // Check temperature is within min/max bounds - WARNING ONLY
             if (step.temperatureActual !== null && step.temperatureActual !== undefined) {
                 const tempActual = parseFloat(step.temperatureActual);
                 const tempMin = parseFloat(step.temperatureSetpointMin);
@@ -15,22 +15,24 @@ const validateCIPData = (cipData) => {
 
                 if (!isNaN(tempActual) && !isNaN(tempMin) && !isNaN(tempMax)) {
                     if (tempActual < tempMin || tempActual > tempMax) {
-                        errors.push({
+                        warnings.push({
                             field: `steps[${index}].temperatureActual`,
-                            message: `Step ${step.stepNumber} (${step.stepName}): Temperature ${tempActual}°C is outside allowed range ${tempMin}°C - ${tempMax}°C`
+                            message: `Step ${step.stepNumber} (${step.stepName}): Temperature ${tempActual}°C is outside recommended range ${tempMin}°C - ${tempMax}°C`,
+                            severity: 'warning'
                         });
                     }
                 }
             }
 
-            // Validate concentration for ALKALI and ACID
+            // Check concentration for ALKALI and ACID - WARNING ONLY
             if (step.stepName === 'ALKALI' && step.concentrationActual !== null && step.concentrationActual !== undefined) {
                 const conc = parseFloat(step.concentrationActual);
                 if (!isNaN(conc)) {
                     if (conc < 1.5 || conc > 2.0) {
-                        errors.push({
+                        warnings.push({
                             field: `steps[${index}].concentrationActual`,
-                            message: `ALKALI concentration ${conc}% is outside allowed range 1.5% - 2.0%`
+                            message: `ALKALI concentration ${conc}% is outside recommended range 1.5% - 2.0%`,
+                            severity: 'warning'
                         });
                     }
                 }
@@ -40,26 +42,29 @@ const validateCIPData = (cipData) => {
                 const conc = parseFloat(step.concentrationActual);
                 if (!isNaN(conc)) {
                     if (conc < 0.5 || conc > 1.0) {
-                        errors.push({
+                        warnings.push({
                             field: `steps[${index}].concentrationActual`,
-                            message: `ACID concentration ${conc}% is outside allowed range 0.5% - 1.0%`
+                            message: `ACID concentration ${conc}% is outside recommended range 0.5% - 1.0%`,
+                            severity: 'warning'
                         });
                     }
                 }
             }
 
-            // Validate time format (HH:mm)
+            // Check time format (HH:mm) - WARNING ONLY
             const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
             if (step.startTime && !timeRegex.test(step.startTime)) {
-                errors.push({
+                warnings.push({
                     field: `steps[${index}].startTime`,
-                    message: `Step ${step.stepNumber}: Invalid start time format. Use HH:mm`
+                    message: `Step ${step.stepNumber}: Start time format should be HH:mm (e.g., 09:30)`,
+                    severity: 'info'
                 });
             }
             if (step.endTime && !timeRegex.test(step.endTime)) {
-                errors.push({
+                warnings.push({
                     field: `steps[${index}].endTime`,
-                    message: `Step ${step.stepNumber}: Invalid end time format. Use HH:mm`
+                    message: `Step ${step.stepNumber}: End time format should be HH:mm (e.g., 10:30)`,
+                    severity: 'info'
                 });
             }
         });
@@ -68,23 +73,23 @@ const validateCIPData = (cipData) => {
     // Validate based on line type
     if (isBCDLine) {
         // Validate BCD specific data
-        errors.push(...validateBCDData(cipData));
+        warnings.push(...validateBCDData(cipData));
     } else {
         // Validate LINE A specific data (COP records)
-        errors.push(...validateLineAData(cipData));
+        warnings.push(...validateLineAData(cipData));
     }
 
-    return errors;
+    return warnings;
 };
 
 // Validate LINE A specific data
 const validateLineAData = (cipData) => {
-    const errors = [];
+    const warnings = [];
 
-    // Validate COP records
+    // Validate COP records - WARNING ONLY
     if (cipData.copRecords && cipData.copRecords.length > 0) {
         cipData.copRecords.forEach((cop, index) => {
-            // Validate temperature is within min/max bounds
+            // Check temperature is within min/max bounds - WARNING ONLY
             if (cop.tempActual !== null && cop.tempActual !== undefined) {
                 const tempActual = parseFloat(cop.tempActual);
                 const tempMin = parseFloat(cop.tempMin);
@@ -92,21 +97,23 @@ const validateLineAData = (cipData) => {
 
                 if (!isNaN(tempActual) && !isNaN(tempMin) && !isNaN(tempMax)) {
                     if (tempActual < tempMin || tempActual > tempMax) {
-                        errors.push({
+                        warnings.push({
                             field: `copRecords[${index}].tempActual`,
-                            message: `${cop.stepType}: Temperature ${tempActual}°C is outside allowed range ${tempMin}°C - ${tempMax}°C`
+                            message: `${cop.stepType}: Temperature ${tempActual}°C is outside recommended range ${tempMin}°C - ${tempMax}°C`,
+                            severity: 'warning'
                         });
                     }
                 }
             }
 
-            // Validate specific time requirements
+            // Check specific time requirements - INFO ONLY (not strict)
             if (cop.stepType === 'COP' && cop.time67Min) {
                 const time = parseInt(cop.time67Min);
                 if (!isNaN(time) && time !== 67) {
-                    errors.push({
+                    warnings.push({
                         field: `copRecords[${index}].time67Min`,
-                        message: `COP time should be 67 minutes`
+                        message: `COP time is ${time} minutes (recommended: 67 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
@@ -114,9 +121,10 @@ const validateLineAData = (cipData) => {
             if (cop.stepType === 'SOP' && cop.time45Min) {
                 const time = parseInt(cop.time45Min);
                 if (!isNaN(time) && time !== 45) {
-                    errors.push({
+                    warnings.push({
                         field: `copRecords[${index}].time45Min`,
-                        message: `SOP time should be 45 minutes`
+                        message: `SOP time is ${time} minutes (recommended: 45 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
@@ -124,45 +132,49 @@ const validateLineAData = (cipData) => {
             if (cop.stepType === 'SIP' && cop.time60Min) {
                 const time = parseInt(cop.time60Min);
                 if (!isNaN(time) && time !== 60) {
-                    errors.push({
+                    warnings.push({
                         field: `copRecords[${index}].time60Min`,
-                        message: `SIP time should be 60 minutes`
+                        message: `SIP time is ${time} minutes (recommended: 60 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
 
-            // Validate time format (HH:mm)
+            // Check time format (HH:mm) - INFO ONLY
             const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
             if (cop.startTime && !timeRegex.test(cop.startTime)) {
-                errors.push({
+                warnings.push({
                     field: `copRecords[${index}].startTime`,
-                    message: `${cop.stepType}: Invalid start time format. Use HH:mm`
+                    message: `${cop.stepType}: Start time format should be HH:mm (e.g., 09:30)`,
+                    severity: 'info'
                 });
             }
             if (cop.endTime && !timeRegex.test(cop.endTime)) {
-                errors.push({
+                warnings.push({
                     field: `copRecords[${index}].endTime`,
-                    message: `${cop.stepType}: Invalid end time format. Use HH:mm`
+                    message: `${cop.stepType}: End time format should be HH:mm (e.g., 10:30)`,
+                    severity: 'info'
                 });
             }
         });
     }
 
-    return errors;
+    return warnings;
 };
 
 // Validate BCD specific data
 const validateBCDData = (cipData) => {
-    const errors = [];
+    const warnings = [];
 
-    // Validate flow rates based on specific line
+    // Check flow rates based on specific line - WARNING ONLY
     if (cipData.line === 'LINE D') {
         if (cipData.flowRateD !== null && cipData.flowRateD !== undefined) {
             const flowD = parseFloat(cipData.flowRateD);
             if (!isNaN(flowD) && flowD < 6000) {
-                errors.push({
+                warnings.push({
                     field: 'flowRateD',
-                    message: 'Flow D must be minimum 6000 L/H'
+                    message: `Flow D is ${flowD} L/H (recommended minimum: 6000 L/H)`,
+                    severity: 'warning'
                 });
             }
         }
@@ -170,107 +182,117 @@ const validateBCDData = (cipData) => {
         if (cipData.flowRateBC !== null && cipData.flowRateBC !== undefined) {
             const flowBC = parseFloat(cipData.flowRateBC);
             if (!isNaN(flowBC) && flowBC < 9000) {
-                errors.push({
+                warnings.push({
                     field: 'flowRateBC',
-                    message: 'Flow B,C must be minimum 9000 L/H'
+                    message: `Flow B,C is ${flowBC} L/H (recommended minimum: 9000 L/H)`,
+                    severity: 'warning'
                 });
             }
         }
     }
 
-    // Validate special records
+    // Validate special records - WARNING ONLY
     if (cipData.specialRecords && cipData.specialRecords.length > 0) {
         cipData.specialRecords.forEach((record, index) => {
-            // Validate DRYING
+            // Check DRYING - WARNING ONLY
             if (record.stepType === 'DRYING') {
                 if (record.tempActual !== null && record.tempActual !== undefined) {
                     const temp = parseFloat(record.tempActual);
                     if (!isNaN(temp) && (temp < 118 || temp > 125)) {
-                        errors.push({
+                        warnings.push({
                             field: `specialRecords[${index}].tempActual`,
-                            message: 'DRYING temperature must be between 118°C and 125°C'
+                            message: `DRYING temperature is ${temp}°C (recommended range: 118°C - 125°C)`,
+                            severity: 'warning'
                         });
                     }
                 }
 
-                if (record.time !== 57) {
-                    errors.push({
+                if (record.time && record.time !== 57) {
+                    warnings.push({
                         field: `specialRecords[${index}].time`,
-                        message: 'DRYING time should be 57 minutes'
+                        message: `DRYING time is ${record.time} minutes (recommended: 57 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
 
-            // Validate FOAMING
+            // Check FOAMING - INFO ONLY
             if (record.stepType === 'FOAMING') {
-                if (record.time !== 41) {
-                    errors.push({
+                if (record.time && record.time !== 41) {
+                    warnings.push({
                         field: `specialRecords[${index}].time`,
-                        message: 'FOAMING time should be 41 minutes'
+                        message: `FOAMING time is ${record.time} minutes (recommended: 41 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
 
-            // Validate DISINFECT/SANITASI
+            // Check DISINFECT/SANITASI - WARNING ONLY
             if (record.stepType === 'DISINFECT/SANITASI') {
-                // Validate concentration
+                // Check concentration
                 if (record.concActual !== null && record.concActual !== undefined) {
                     const conc = parseFloat(record.concActual);
                     if (!isNaN(conc) && (conc < 0.3 || conc > 0.5)) {
-                        errors.push({
+                        warnings.push({
                             field: `specialRecords[${index}].concActual`,
-                            message: 'DISINFECT/SANITASI concentration must be between 0.3% and 0.5%'
+                            message: `DISINFECT/SANITASI concentration is ${conc}% (recommended range: 0.3% - 0.5%)`,
+                            severity: 'warning'
                         });
                     }
                 }
 
-                // Validate temperature based on line
+                // Check temperature based on line
                 if (record.tempActual !== null && record.tempActual !== undefined) {
                     const temp = parseFloat(record.tempActual);
                     if (cipData.line === 'LINE D') {
                         if (!isNaN(temp) && (temp < 20 || temp > 35)) {
-                            errors.push({
+                            warnings.push({
                                 field: `specialRecords[${index}].tempActual`,
-                                message: 'DISINFECT/SANITASI temperature for LINE D must be between 20°C and 35°C'
+                                message: `DISINFECT/SANITASI temperature for LINE D is ${temp}°C (recommended range: 20°C - 35°C)`,
+                                severity: 'warning'
                             });
                         }
                     } else {
                         // LINE B or C
                         if (!isNaN(temp) && temp !== 40) {
-                            errors.push({
+                            warnings.push({
                                 field: `specialRecords[${index}].tempActual`,
-                                message: 'DISINFECT/SANITASI temperature for LINE B/C must be 40°C'
+                                message: `DISINFECT/SANITASI temperature for LINE B/C is ${temp}°C (recommended: 40°C)`,
+                                severity: 'warning'
                             });
                         }
                     }
                 }
 
-                if (record.time !== 30) {
-                    errors.push({
+                if (record.time && record.time !== 30) {
+                    warnings.push({
                         field: `specialRecords[${index}].time`,
-                        message: 'DISINFECT/SANITASI time should be 30 minutes'
+                        message: `DISINFECT/SANITASI time is ${record.time} minutes (recommended: 30 minutes)`,
+                        severity: 'info'
                     });
                 }
             }
 
-            // Validate time format (HH:mm)
+            // Check time format (HH:mm) - INFO ONLY
             const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
             if (record.startTime && !timeRegex.test(record.startTime)) {
-                errors.push({
+                warnings.push({
                     field: `specialRecords[${index}].startTime`,
-                    message: `${record.stepType}: Invalid start time format. Use HH:mm`
+                    message: `${record.stepType}: Start time format should be HH:mm (e.g., 09:30)`,
+                    severity: 'info'
                 });
             }
             if (record.endTime && !timeRegex.test(record.endTime)) {
-                errors.push({
+                warnings.push({
                     field: `specialRecords[${index}].endTime`,
-                    message: `${record.stepType}: Invalid end time format. Use HH:mm`
+                    message: `${record.stepType}: End time format should be HH:mm (e.g., 10:30)`,
+                    severity: 'info'
                 });
             }
         });
     }
 
-    return errors;
+    return warnings;
 };
 
 // Helper function to get temperature compliance status
@@ -415,7 +437,34 @@ const calculateComplianceScore = (cipData) => {
         passedChecks,
         failedChecks: totalChecks - passedChecks - warnings,
         warnings,
-        status: score >= 95 ? 'EXCELLENT' : score >= 80 ? 'GOOD' : score >= 60 ? 'ACCEPTABLE' : 'POOR'
+        status: score >= 95 ? 'EXCELLENT' : score >= 80 ? 'GOOD' : score >= 60 ? 'ACCEPTABLE' : 'NEEDS_ATTENTION'
+    };
+};
+
+// Helper function to categorize warnings by severity
+const categorizeWarnings = (warnings) => {
+    const categorized = {
+        critical: warnings.filter(w => w.severity === 'critical'),
+        warning: warnings.filter(w => w.severity === 'warning'),
+        info: warnings.filter(w => w.severity === 'info')
+    };
+    
+    return categorized;
+};
+
+// Helper function to get warning summary
+const getWarningSummary = (warnings) => {
+    const categorized = categorizeWarnings(warnings);
+    
+    return {
+        total: warnings.length,
+        critical: categorized.critical.length,
+        warning: categorized.warning.length,
+        info: categorized.info.length,
+        hasBlockingIssues: categorized.critical.length > 0,
+        message: warnings.length === 0 
+            ? "All parameters are within recommended ranges" 
+            : `Found ${warnings.length} validation notice(s): ${categorized.critical.length} critical, ${categorized.warning.length} warnings, ${categorized.info.length} info`
     };
 };
 
@@ -424,5 +473,7 @@ module.exports = {
     validateLineAData,
     validateBCDData,
     getTemperatureComplianceStatus,
-    calculateComplianceScore
+    calculateComplianceScore,
+    categorizeWarnings,
+    getWarningSummary
 };

@@ -26,6 +26,9 @@ router.get("/:id", cipController.getCIPReportById);
 // Check CIP compliance
 router.get("/:id/compliance", cipController.checkCIPCompliance);
 
+// Submit a draft CIP report (change status from In Progress to Complete)
+router.put("/:id/submit", cipController.submitCIPReport);
+
 // Create new CIP report
 router.post("/", cipController.createCIPReport);
 
