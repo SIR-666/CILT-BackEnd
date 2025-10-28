@@ -884,13 +884,8 @@ async function updateCIPReportWithCompliance(id, updateData, calculateCompliance
       return { cipReport: null, complianceScore: null };
     }
 
-    // Update using the same logic as updateCIPReport
-    // (Reuse the update logic from updateCIPReport function)
-
     // Create a temporary object for compliance calculation
     const tempCipData = { ...updateData, id, steps: [], copRecords: [], specialRecords: [] };
-
-    // ... (same update logic as updateCIPReport) ...
 
     // Calculate compliance score before committing
     let complianceScore = null;
