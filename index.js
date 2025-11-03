@@ -40,3 +40,6 @@ app.use("/checklist-master", ciltChecklistMasterRoutes);
 
 const cipRoutes = require("./routes/cipRoutes");
 app.use("/cip-report", cipRoutes);
+
+const ciltLineRoutes = require("./routes/ciltLineRoutes");
+app.use("/line-master", ciltLineRoutes);
