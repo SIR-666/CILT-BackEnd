@@ -72,11 +72,11 @@ async function createFrom(data) {
 
       const insertGnrQuery = `
         INSERT INTO tb_CILT_gnr_master
-          (plant, line, machine, package_type, activity, frekuensi, status, good, need, reject, content)
+          (plant, line, machine, package_type, activity, frekuensi, status, good, need, reject)
         OUTPUT inserted.id, inserted.plant, inserted.line, inserted.machine, inserted.package_type,
                inserted.activity, inserted.frekuensi, inserted.status, inserted.good, inserted.need,
-               inserted.reject, inserted.content
-        SELECT s.plant, @targetLine, s.machine, s.package_type, s.activity, s.frekuensi, s.status, s.good, s.need, s.reject, s.content
+               inserted.reject
+        SELECT s.plant, @targetLine, s.machine, s.package_type, s.activity, s.frekuensi, s.status, s.good, s.need, s.reject
         FROM tb_CILT_gnr_master s
         WHERE s.line = @lineRef
           AND s.package_type = @gnrType
@@ -185,7 +185,7 @@ async function deleteLine(line) {
       DELETE FROM tb_CILT_gnr_master
       OUTPUT deleted.id, deleted.plant, deleted.line, deleted.machine, deleted.package_type,
              deleted.activity, deleted.frekuensi, deleted.status, deleted.good, deleted.need,
-             deleted.reject, deleted.content
+             deleted.reject
       WHERE line = @line
     `);
 
