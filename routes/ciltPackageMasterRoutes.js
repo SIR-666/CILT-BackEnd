@@ -4,5 +4,6 @@ const ciltPackageMasterController = require("../controllers/ciltPackageMasterCon
 
 router.get("/", ciltPackageMasterController.getPackageMaster);
 router.get("/package", ciltPackageMasterController.getPackage);
+router.get("/by-line", ciltPackageMasterController.getPackageMasterByLine);
 
 module.exports = router;

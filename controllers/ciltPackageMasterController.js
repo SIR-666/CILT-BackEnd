@@ -2,8 +2,25 @@ const ciltPackageMasterService = require("../services/ciltPackageMasterService")
 
 exports.getPackageMaster = async (req, res) => {
   try {
+    const packageMaster = await ciltPackageMasterService.getPackageMaster();
+
+    if (!packageMaster) {
+      return res.status(404).json({ message: "Package Master not found" });
+    }
+
+    return res.status(200).json(packageMaster);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.getPackageMasterByLine = async (req, res) => {
+  try {
     const { line } = req.query;
-    const packageMaster = await ciltPackageMasterService.getPackageMaster(line);
+    const packageMaster = await ciltPackageMasterService.getPackageMasterByLine(
+      line
+    );
 
     if (!packageMaster || packageMaster.length === 0) {
       return res.status(404).json({ message: "Package Master not found" });
