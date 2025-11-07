@@ -2,6 +2,23 @@ const sql = require("mssql");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
+async function getLineMaster() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+
+    let query = `
+      SELECT DISTINCT line FROM tb_CILT_package_master
+    `;
+
+    const result = await request.query(query);
+    return result.recordset;
+  } catch (error) {
+    logger.error("Error fetching package master CILT:", error);
+    throw error;
+  }
+}
+
 async function createFrom(data) {
   let transaction;
   try {
@@ -236,4 +253,5 @@ async function deleteLine(line) {
 module.exports = {
   createFrom,
   deleteLine,
+  getLineMaster,
 };

@@ -1,5 +1,23 @@
 const ciltLineMasterService = require("../services/ciltLineService");
 
+exports.getLineMaster = async (req, res) => {
+  try {
+    const result = await ciltLineMasterService.getLineMaster();
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || "Internal server error",
+      details: error.details,
+    });
+  }
+};
+
 exports.createFrom = async (req, res) => {
   try {
     const result = await ciltLineMasterService.createFrom(req.body);

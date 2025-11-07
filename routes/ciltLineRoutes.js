@@ -4,5 +4,6 @@ const ciltLineMasterController = require("../controllers/ciltLineMasterControlle
 
 router.post("/create-from", ciltLineMasterController.createFrom);
 router.delete("/delete-line/:line", ciltLineMasterController.deleteLine);
+router.get("/", ciltLineMasterController.getLineMaster);
 
 module.exports = router;
