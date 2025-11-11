@@ -130,7 +130,7 @@ async function updateGNR(id, data) {
   }
 }
 
-async function disabledGNR(id, visibility) {
+async function disabledGNR(id, visibility = 0) {
   if (id == null) throw new Error("Missing id for disable");
   let transaction;
   try {
@@ -147,6 +147,14 @@ async function disabledGNR(id, visibility) {
       OUTPUT inserted.*
       WHERE id = @id
     `;
+
+    const result = await req.query(disableSql);
+    await transaction.commit();
+
+    return {
+      rowsAffected: result.rowsAffected?.[0] || 0,
+      updated: result.recordset || [],
+    };
   } catch (error) {
     logger.error("Error disabling GNR:", error);
     if (transaction) {
@@ -160,8 +168,8 @@ async function disabledGNR(id, visibility) {
   }
 }
 
-async function enabledGNR(id, visibility) {
-  if (id == null) throw new Error("Missing id for disable");
+async function enabledGNR(id, visibility = 1) {
+  if (id == null) throw new Error("Missing id for enable");
   let transaction;
   try {
     const pool = await getPool();
@@ -171,12 +179,20 @@ async function enabledGNR(id, visibility) {
     req.input("id", sql.Int, id);
     req.input("visibility", sql.Bit, visibility);
 
-    const disableSql = `
+    const enableSql = `
       UPDATE tb_CILT_gnr_master
       SET visibility = @visibility
       OUTPUT inserted.*
       WHERE id = @id
     `;
+
+    const result = await req.query(enableSql);
+    await transaction.commit();
+
+    return {
+      rowsAffected: result.rowsAffected?.[0] || 0,
+      updated: result.recordset || [],
+    };
   } catch (error) {
     logger.error("Error enabling GNR:", error);
     if (transaction) {
@@ -195,5 +211,5 @@ module.exports = {
   createGNR,
   updateGNR,
   disabledGNR,
-  enabledGNR
+  enabledGNR,
 };
