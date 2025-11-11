@@ -5,7 +5,7 @@ const masterChecklistController = require("../controllers/ciltChecklistMasterCon
 router.get("/", masterChecklistController.getAllMasterChecklist);
 router.post("/create", masterChecklistController.createChecklist);
 router.put("/update/:id", masterChecklistController.updateChecklist);
-router.put("/disable/:id", masterChecklistController.disableChecklist);
-router.put("/enable/:id", masterChecklistController.enableChecklist);
+router.patch("/disable/:id", masterChecklistController.disableChecklist);
+router.patch("/enable/:id", masterChecklistController.enableChecklist);
 
 module.exports = router;
