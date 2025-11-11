@@ -106,6 +106,7 @@ async function createFrom(data) {
               AND x.package_type = s.package_type
               AND x.activity = s.activity
           )
+        ORDER BY s.id ASC
       `;
       gnrResult = await reqGnr.query(insertGnrQuery);
     }
@@ -141,6 +142,7 @@ async function createFrom(data) {
               AND x.job_type = s.job_type
               AND x.componen = s.componen
           )
+        ORDER BY s.id ASC
       `;
       checklistResult = await reqChecklist.query(insertChecklistQuery);
     }
