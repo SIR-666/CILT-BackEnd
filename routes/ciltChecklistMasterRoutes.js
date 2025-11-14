@@ -7,5 +7,6 @@ router.post("/create", masterChecklistController.createChecklist);
 router.put("/update/:id", masterChecklistController.updateChecklist);
 router.patch("/disable/:id", masterChecklistController.disableChecklist);
 router.patch("/enable/:id", masterChecklistController.enableChecklist);
+router.delete("/delete/:id", masterChecklistController.deleteChecklist);
 
 module.exports = router;

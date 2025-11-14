@@ -130,6 +130,38 @@ async function updateChecklist(id, data) {
   }
 }
 
+async function deleteChecklist(id) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+    const deleteSql = `
+      DELETE FROM tb_CILT_checklist_master
+      OUTPUT deleted.*
+      WHERE id = @id
+    `;
+    const result = await req.query(deleteSql);
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected[0] || 0,
+      deleted: result.recordset,
+    };
+  } catch (error) {
+    logger.error("Error deleting Checklist:", error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rbErr) {
+        logger.error("Rollback failed:", rbErr);
+      }
+    }
+    throw error;
+  }
+}
+
 async function disableChecklist(id, visibility) {
   if (id == null) throw new Error("Missing id for disable");
   let transaction;
@@ -210,4 +242,5 @@ module.exports = {
   updateChecklist,
   disableChecklist,
   enableChecklist,
+  deleteChecklist,
 };

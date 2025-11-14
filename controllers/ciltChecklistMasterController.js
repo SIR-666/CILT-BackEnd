@@ -86,3 +86,19 @@ exports.enableChecklist = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.deleteChecklist = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await masterChecklistService.deleteChecklist(id);
+    return res.status(200).json({
+      success: true,
+      message: "Checklist deleted",
+      rowsAffected: result.rowsAffected,
+      data: result.deleted,
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
