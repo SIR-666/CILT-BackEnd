@@ -206,10 +206,39 @@ async function enabledGNR(id, visibility = 1) {
   }
 }
 
+async function deleteGNR(id){
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+    const deleteSql = `
+      DELETE FROM tb_CILT_gnr_master
+      OUTPUT deleted.*
+      WHERE id = @id
+    `;
+    const result = await req.query(deleteSql);
+    await transaction.commit();
+} catch (error) {
+    logger.error("Error deleting GNR:", error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rbErr) {
+        logger.error("Rollback failed:", rbErr);
+      }
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   getAllMasterGNR,
   createGNR,
   updateGNR,
   disabledGNR,
   enabledGNR,
+  deleteGNR,
 };

@@ -68,3 +68,19 @@ exports.enabledGNR = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+exports.deleteGNR = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await masterGnrService.deleteGNR(id);
+    return res.status(200).json({
+      success: true,
+      message: "GNR deleted",
+      data: result.deleted,
+      rowsAffected: result.rowsAffected,
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

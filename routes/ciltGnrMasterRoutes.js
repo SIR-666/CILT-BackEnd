@@ -7,5 +7,6 @@ router.post("/create", masterGnrController.createGNR);
 router.put("/update/:id", masterGnrController.updateGNR);
 router.patch("/enable/:id", masterGnrController.enabledGNR);
 router.patch("/disable/:id", masterGnrController.disabledGNR);
+router.delete("/delete/:id", masterGnrController.deleteGNR);
 
 module.exports = router;
