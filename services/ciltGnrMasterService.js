@@ -221,6 +221,10 @@ async function deleteGNR(id){
     `;
     const result = await req.query(deleteSql);
     await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected?.[0] || 0,
+      deleted: result.recordset || [],
+    };
 } catch (error) {
     logger.error("Error deleting GNR:", error);
     if (transaction) {
