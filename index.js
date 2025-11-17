@@ -43,3 +43,12 @@ app.use("/cip-report", cipRoutes);
 
 const ciltLineRoutes = require("./routes/ciltLineRoutes");
 app.use("/line-master", ciltLineRoutes);
+
+const ciltCustomRoutes = require("./routes/ciltCustomRoutes");
+app.use("/custom/packages", ciltCustomRoutes);
+
+const ciltCustomPlantRoutes = require("./routes/ciltCustomPlantRoutes");
+app.use("/custom/plants", ciltCustomPlantRoutes);
+
+const ciltCustomMachineRoutes = require("./routes/ciltCustomMachineRoutes");
+app.use("/custom/machines", ciltCustomMachineRoutes);
