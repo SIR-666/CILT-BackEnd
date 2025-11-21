@@ -6,5 +6,6 @@ router.get("/", ciltCustomController.getCustomData);
 router.post("/create", ciltCustomController.createCustomData);
 router.put("/update/:id", ciltCustomController.updateCustomData);
 router.delete("/delete/:id", ciltCustomController.deleteCustomData);
+router.put("/update-with-relations/:id", ciltCustomController.updatePackageWithRelations);
 
 module.exports = router;

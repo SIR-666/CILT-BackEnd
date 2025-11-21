@@ -80,3 +80,19 @@ exports.deleteCustomData = async (req, res) => {
   }
 };
 
+exports.updatePackageWithRelations = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await ciltCustomService.updatePackageWithRelations(id, req.body);
+    return res.status(200).json({
+      success: true,
+      message: "Package updated successfully",
+      rowsAffected: result.rowsAffected,
+      data: result.updated,
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    const status = error.status || 500;
+    return res.status(status).json({ success: false, message: error.message });
+  }
+};

@@ -93,6 +93,50 @@ async function updateCustomData(id, data) {
   }
 }
 
+async function updatePackageWithRelations(id, data) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    // Get old package data first
+    const oldDataReq = transaction.request();
+    oldDataReq.input("id", sql.Int, id);
+    const oldDataResult = await oldDataReq.query(
+      "SELECT * FROM tb_CILT_custom WHERE id = @id"
+    );
+    const oldData = oldDataResult.recordset[0];
+
+    // Update package
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+    req.input("plant", sql.VarChar, data.plant);
+    req.input("machine", sql.VarChar, data.machine);
+    req.input("line", sql.VarChar, data.line);
+    req.input("package", sql.VarChar, data.package);
+    req.input("header", sql.VarChar, data.header);
+    req.input("item", sql.VarChar, data.item);
+    const customResult = await req.query(`
+      UPDATE tb_CILT_custom
+      SET plant = @plant, line = @line, machine = @machine,
+          package = @package, header = @header, item = @item
+      OUTPUT inserted.*
+      WHERE id = @id
+    `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: customResult.rowsAffected[0],
+      updated: customResult.recordset,
+    };
+  } catch (error) {
+    logger.error("Error updating package with relations:", error);
+    if (transaction) await transaction.rollback();
+    throw error;
+  }
+}
+
 async function deleteCustomData(id) {
   let transaction;
   try {
@@ -129,4 +173,5 @@ module.exports = {
   createCustomData,
   updateCustomData,
   deleteCustomData,
+  updatePackageWithRelations,
 };
