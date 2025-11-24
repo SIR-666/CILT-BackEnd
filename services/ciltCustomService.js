@@ -23,8 +23,15 @@ async function createCustomData(data) {
     req.input("machine", sql.VarChar, data.machine);
     req.input("line", sql.VarChar, data.line);
     req.input("package", sql.VarChar, data.package);
-    req.input("header", sql.VarChar, JSON.stringify(data.header));
-    req.input("item", sql.VarChar, JSON.stringify(data.item));
+    const headerStr = typeof data.header === 'string'
+      ? data.header
+      : JSON.stringify(data.header || {});
+    const itemStr = typeof data.item === 'string'
+      ? data.item
+      : JSON.stringify(data.item || []);
+
+    req.input("header", sql.NVarChar(sql.MAX), headerStr);
+    req.input("item", sql.NVarChar(sql.MAX), itemStr);
     const customResult = await req.query(`
             INSERT INTO tb_CILT_custom
                 (plant, line, machine, package, header, item)
@@ -62,8 +69,15 @@ async function updateCustomData(id, data) {
     req.input("machine", sql.VarChar, data.machine);
     req.input("line", sql.VarChar, data.line);
     req.input("package", sql.VarChar, data.package);
-    req.input("header", sql.VarChar, JSON.stringify(data.header));
-    req.input("item", sql.VarChar, JSON.stringify(data.item));
+    const headerStr = typeof data.header === 'string'
+      ? data.header
+      : JSON.stringify(data.header || {});
+    const itemStr = typeof data.item === 'string'
+      ? data.item
+      : JSON.stringify(data.item || []);
+
+    req.input("header", sql.NVarChar(sql.MAX), headerStr);
+    req.input("item", sql.NVarChar(sql.MAX), itemStr);
     const customResult = await req.query(`
             UPDATE tb_CILT_custom
             SET plant = @plant,
@@ -100,7 +114,6 @@ async function updatePackageWithRelations(id, data) {
     transaction = pool.transaction();
     await transaction.begin();
 
-    // Get old package data first
     const oldDataReq = transaction.request();
     oldDataReq.input("id", sql.Int, id);
     const oldDataResult = await oldDataReq.query(
@@ -108,15 +121,25 @@ async function updatePackageWithRelations(id, data) {
     );
     const oldData = oldDataResult.recordset[0];
 
-    // Update package
+    if (!oldData) {
+      throw new Error(`Package with ID ${id} not found`);
+    }
+
     const req = transaction.request();
     req.input("id", sql.Int, id);
     req.input("plant", sql.VarChar, data.plant);
     req.input("machine", sql.VarChar, data.machine);
     req.input("line", sql.VarChar, data.line);
     req.input("package", sql.VarChar, data.package);
-    req.input("header", sql.VarChar, data.header);
-    req.input("item", sql.VarChar, data.item);
+    const headerStr = typeof data.header === 'string'
+      ? data.header
+      : JSON.stringify(data.header || {});
+    const itemStr = typeof data.item === 'string'
+      ? data.item
+      : JSON.stringify(data.item || []);
+
+    req.input("header", sql.NVarChar(sql.MAX), headerStr);
+    req.input("item", sql.NVarChar(sql.MAX), itemStr);
     const customResult = await req.query(`
       UPDATE tb_CILT_custom
       SET plant = @plant, line = @line, machine = @machine,
@@ -145,15 +168,40 @@ async function deleteCustomData(id) {
     await transaction.begin();
     const req = transaction.request();
     req.input("id", sql.Int, id);
+    const selectResult = await req.query(`
+      SELECT * FROM tb_CILT_custom WHERE id = @id
+    `);
+
+    if (selectResult.recordset.length === 0) {
+      throw new Error(`Package with ID ${id} not found`);
+    }
+    const packageInfo = selectResult.recordset[0];
     const deleteResult = await req.query(`
-            DELETE FROM tb_CILT_custom
-            OUTPUT deleted.*
-            WHERE id = @id
-        `);
+      DELETE FROM tb_CILT_custom
+      OUTPUT deleted.*
+      WHERE id = @id
+    `);
+
+    const req2 = transaction.request();
+    req2.input("plant", sql.VarChar, packageInfo.plant);
+    req2.input("machine", sql.VarChar, packageInfo.machine);
+    req2.input("line", sql.VarChar, packageInfo.line);
+    req2.input("package", sql.VarChar, packageInfo.package);
+
+    const deletePackageResult = await req2.query(`
+      DELETE FROM tb_CILT_custom_packages
+      OUTPUT deleted.*
+      WHERE plant = @plant 
+        AND machine = @machine 
+        AND line = @line 
+        AND package = @package
+    `);
     await transaction.commit();
     return {
       rowsAffected: deleteResult.rowsAffected[0],
       deleted: deleteResult.recordset,
+      packageDeleted: deletePackageResult.recordset,
+      packageRowsAffected: deletePackageResult.rowsAffected[0],
     };
   } catch (error) {
     logger.error("Error deleting custom data CILT:", error);
@@ -168,10 +216,249 @@ async function deleteCustomData(id) {
   }
 }
 
+async function getCustomDataById(id) {
+  try {
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM tb_CILT_custom WHERE id = @id");
+
+    if (result.recordset.length === 0) {
+      return null;
+    }
+
+    const data = result.recordset[0];
+
+    try {
+      data.headerParsed = data.header ? JSON.parse(data.header) : {};
+      data.itemParsed = data.item ? JSON.parse(data.item) : [];
+    } catch (err) {
+      logger.warn("Error parsing JSON fields:", err);
+      data.headerParsed = {};
+      data.itemParsed = [];
+    }
+
+    return data;
+  } catch (error) {
+    logger.error("Error fetching custom data by ID:", error);
+    throw error;
+  }
+}
+
+async function getCustomDataWithParsed() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query("SELECT * FROM tb_CILT_custom");
+
+    return result.recordset.map(data => {
+      try {
+        data.headerParsed = data.header ? JSON.parse(data.header) : {};
+        data.itemParsed = data.item ? JSON.parse(data.item) : [];
+      } catch (err) {
+        logger.warn(`Error parsing JSON for package ID ${data.id}:`, err);
+        data.headerParsed = {};
+        data.itemParsed = [];
+      }
+      return data;
+    });
+  } catch (error) {
+    logger.error("Error fetching custom data with parsed:", error);
+    throw error;
+  }
+}
+
+async function getCustomPackages() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query("SELECT * FROM tb_CILT_custom_packages");
+    return result.recordset;
+  } catch (error) {
+    logger.error("Error fetching custom packages:", error);
+    throw error;
+  }
+}
+
+async function getCustomPackageById(id) {
+  try {
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .query("SELECT * FROM tb_CILT_custom_packages WHERE id = @id");
+
+    if (result.recordset.length === 0) {
+      return null;
+    }
+
+    const data = result.recordset[0];
+    try {
+      data.headerParsed = data.header ? JSON.parse(data.header) : {};
+      data.itemParsed = data.item ? JSON.parse(data.item) : [];
+    } catch (err) {
+      logger.warn("Error parsing JSON fields:", err);
+      data.headerParsed = {};
+      data.itemParsed = [];
+    }
+    return data;
+  } catch (error) {
+    logger.error("Error fetching custom package by ID:", error);
+    throw error;
+  }
+}
+
+async function createCustomPackage(data) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const req = transaction.request();
+    req.input("plant", sql.VarChar, data.plant);
+    req.input("machine", sql.VarChar, data.machine);
+    req.input("line", sql.VarChar, data.line);
+    req.input("package", sql.VarChar, data.package);
+
+    const headerStr = typeof data.header === 'string'
+      ? data.header
+      : JSON.stringify(data.header || {});
+    const itemStr = typeof data.item === 'string'
+      ? data.item
+      : JSON.stringify(data.item || []);
+
+    req.input("header", sql.NVarChar(sql.MAX), headerStr);
+    req.input("item", sql.NVarChar(sql.MAX), itemStr);
+
+    const result = await req.query(`
+      INSERT INTO tb_CILT_custom_packages
+        (plant, line, machine, package, header, item)
+      OUTPUT inserted.*
+      VALUES
+        (@plant, @line, @machine, @package, @header, @item)
+    `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected[0],
+      inserted: result.recordset,
+    };
+  } catch (error) {
+    logger.error("Error creating custom package:", error);
+    if (transaction) await transaction.rollback();
+    throw error;
+  }
+}
+
+async function updateCustomPackage(id, data) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+    req.input("plant", sql.VarChar, data.plant);
+    req.input("machine", sql.VarChar, data.machine);
+    req.input("line", sql.VarChar, data.line);
+    req.input("package", sql.VarChar, data.package);
+
+    const headerStr = typeof data.header === 'string'
+      ? data.header
+      : JSON.stringify(data.header || {});
+    const itemStr = typeof data.item === 'string'
+      ? data.item
+      : JSON.stringify(data.item || []);
+
+    req.input("header", sql.NVarChar(sql.MAX), headerStr);
+    req.input("item", sql.NVarChar(sql.MAX), itemStr);
+
+    const result = await req.query(`
+      UPDATE tb_CILT_custom_packages
+      SET plant = @plant, line = @line, machine = @machine,
+          package = @package, header = @header, item = @item,
+          updated_at = GETDATE()
+      OUTPUT inserted.*
+      WHERE id = @id
+    `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected[0],
+      updated: result.recordset,
+    };
+  } catch (error) {
+    logger.error("Error updating custom package:", error);
+    if (transaction) await transaction.rollback();
+    throw error;
+  }
+}
+
+async function deleteCustomPackage(id) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+    const selectResult = await req.query(`
+      SELECT * FROM tb_CILT_custom_packages WHERE id = @id
+    `);
+
+    if (selectResult.recordset.length === 0) {
+      throw new Error(`Package with ID ${id} not found`);
+    }
+
+    const packageInfo = selectResult.recordset[0];
+    const result = await req.query(`
+      DELETE FROM tb_CILT_custom_packages
+      OUTPUT deleted.*
+      WHERE id = @id
+    `);
+
+    const req2 = transaction.request();
+    req2.input("plant", sql.VarChar, packageInfo.plant);
+    req2.input("machine", sql.VarChar, packageInfo.machine);
+    req2.input("line", sql.VarChar, packageInfo.line);
+    req2.input("package", sql.VarChar, packageInfo.package);
+    
+    const deleteMetadataResult = await req2.query(`
+      DELETE FROM tb_CILT_custom
+      OUTPUT deleted.*
+      WHERE plant = @plant 
+        AND machine = @machine 
+        AND line = @line 
+        AND package = @package
+    `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected[0],
+      deleted: result.recordset,
+      metadataDeleted: deleteMetadataResult.recordset,
+      metadataRowsAffected: deleteMetadataResult.rowsAffected[0],
+    };
+  } catch (error) {
+    logger.error("Error deleting custom package:", error);
+    if (transaction) await transaction.rollback();
+    throw error;
+  }
+}
+
 module.exports = {
   getCustomData,
   createCustomData,
   updateCustomData,
   deleteCustomData,
   updatePackageWithRelations,
+  getCustomDataById,
+  getCustomDataWithParsed,
+  getCustomPackages,
+  getCustomPackageById,
+  createCustomPackage,
+  updateCustomPackage,
+  deleteCustomPackage,
 };
