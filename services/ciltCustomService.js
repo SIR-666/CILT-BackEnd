@@ -80,7 +80,6 @@ async function updateCustomData(id, data) {
       ? item
       : JSON.stringify(item || []);
 
-    // 1. Update metadata
     const metaReq = transaction.request();
     metaReq.input("id", sql.Int, id);
     metaReq.input("plant", sql.VarChar, plant);
@@ -102,7 +101,6 @@ async function updateCustomData(id, data) {
       WHERE id = @id
     `);
 
-    // 2. Update designer (kalau ada) supaya sync
     const designerReq = transaction.request();
     designerReq.input("id", sql.Int, id);
     designerReq.input("plant", sql.VarChar, plant);
@@ -343,8 +341,6 @@ async function getCustomPackageById(id) {
   }
 }
 
-// ciltCustomService.js
-
 async function createCustomPackage(data) {
   let transaction;
   try {
@@ -368,7 +364,6 @@ async function createCustomPackage(data) {
       ? item
       : JSON.stringify(item || []);
 
-    // 1. Cari metadata dulu (tb_CILT_custom) dengan kombinasi plant+line+machine+package
     const metaReq = transaction.request();
     metaReq.input("plant", sql.VarChar, plant);
     metaReq.input("machine", sql.VarChar, machine);
@@ -387,7 +382,6 @@ async function createCustomPackage(data) {
 
     let packageId;
 
-    // 2. Jika metadata BELUM ada → buat sekalian (pakai header/item yang sama)
     if (metaResult.recordset.length === 0) {
       const insertMetaReq = transaction.request();
       insertMetaReq.input("plant", sql.VarChar, plant);
@@ -410,7 +404,6 @@ async function createCustomPackage(data) {
       packageId = metaResult.recordset[0].id;
     }
 
-    // 3. Cek apakah sudah ada row designer dengan ID ini
     const existingDesignerReq = transaction.request();
     existingDesignerReq.input("id", sql.Int, packageId);
     const existingDesignerResult = await existingDesignerReq.query(`
@@ -420,7 +413,6 @@ async function createCustomPackage(data) {
     let designerResult;
 
     if (existingDesignerResult.recordset.length === 0) {
-      // 4a. Belum ada → INSERT dengan ID yang sama (pakai IDENTITY_INSERT)
       const insertDesignerReq = transaction.request();
       insertDesignerReq.input("id", sql.Int, packageId);
       insertDesignerReq.input("plant", sql.VarChar, plant);
@@ -442,7 +434,6 @@ async function createCustomPackage(data) {
         SET IDENTITY_INSERT tb_CILT_custom_packages OFF;
       `);
     } else {
-      // 4b. Sudah ada designer ID yang sama → tinggal UPDATE saja
       const updateDesignerReq = transaction.request();
       updateDesignerReq.input("id", sql.Int, packageId);
       updateDesignerReq.input("plant", sql.VarChar, plant);
@@ -502,7 +493,6 @@ async function updateCustomPackage(id, data) {
       ? item
       : JSON.stringify(item || []);
 
-    // 1. Update designer
     const req = transaction.request();
     req.input("id", sql.Int, id);
     req.input("plant", sql.VarChar, plant);
@@ -521,7 +511,6 @@ async function updateCustomPackage(id, data) {
       WHERE id = @id
     `);
 
-    // 2. Sync ke metadata juga (kalau ada row-nya)
     const metaReq = transaction.request();
     metaReq.input("id", sql.Int, id);
     metaReq.input("plant", sql.VarChar, plant);

@@ -174,8 +174,22 @@ exports.getCustomPackageById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: result,
+      data: {
+        ...result,
+
+        header: typeof result.header === "string"
+          ? result.header
+          : JSON.stringify(result.headerParsed || {}),
+
+        item: typeof result.item === "string"
+          ? result.item
+          : JSON.stringify(result.itemParsed || []),
+
+        headerParsed: result.headerParsed,
+        itemParsed: result.itemParsed,
+      },
     });
+
   } catch (error) {
     console.error("Controller error:", error);
     return res.status(500).json({
