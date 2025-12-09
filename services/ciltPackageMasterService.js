@@ -8,7 +8,7 @@ async function getPackageMaster() {
     const result = await pool
       .request()
       .query(
-        "SELECT id, plant, line, machine, package FROM tb_CILT_package_master"
+        "SELECT id, plant, line, machine, package, field_json FROM tb_CILT_package_master"
       );
 
     return result.recordset;
@@ -23,7 +23,7 @@ async function getPackageMasterByLine(line = null) {
     const request = pool.request();
 
     let query = `
-      SELECT id, plant, line, machine, package
+      SELECT id, plant, line, machine, package, field_json
       FROM tb_CILT_package_master
     `;
 
