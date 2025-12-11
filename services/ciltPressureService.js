@@ -1,25 +1,23 @@
-const db = require("../config/db");
-
 exports.getPressureCheck = async (line) => {
-    const sql = `
-    SELECT id, plant, line, machine, parameter_name, sort_order 
+  const query = `
+    SELECT *
     FROM tb_CILT_pressure_check
-    WHERE line = ?
+    WHERE REPLACE(line, ' ', '') = REPLACE(@line, '_', '')
     ORDER BY sort_order ASC
   `;
 
-    const [rows] = await db.execute(sql, [line]);
-    return rows;
+  const params = { line };
+  return await db.query(query, params);
 };
 
 exports.getPressureCheck30Min = async (line) => {
-    const sql = `
-    SELECT id, plant, line, machine, parameter_name, sort_order 
+  const query = `
+    SELECT *
     FROM tb_CILT_pressure_check_30min
-    WHERE line = ?
+    WHERE REPLACE(line, ' ', '') = REPLACE(@line, '_', '')
     ORDER BY sort_order ASC
   `;
 
-    const [rows] = await db.execute(sql, [line]);
-    return rows;
+  const params = { line };
+  return await db.query(query, params);
 };
