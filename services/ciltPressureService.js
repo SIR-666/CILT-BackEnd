@@ -9,8 +9,8 @@ async function getPressureCheck(line) {
     .query(`
       SELECT *
       FROM tb_CILT_pressure_check
-      WHERE REPLACE(line, ' ', '') = REPLACE(@line, '_', '')
-      ORDER BY sort_order ASC
+      WHERE line = @line
+      ORDER BY id ASC
     `);
 
   return result.recordset;
@@ -24,7 +24,7 @@ async function getPressureCheck30Min(line) {
     .query(`
       SELECT *
       FROM tb_CILT_pressure_check_30min
-      WHERE REPLACE(line, ' ', '') = REPLACE(@line, '_', '')
+      WHERE line = @line
       ORDER BY sort_order ASC
     `);
 
