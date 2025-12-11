@@ -5,7 +5,7 @@ exports.getPressureCheck = async (req, res) => {
         const { line } = req.query;
 
         if (!line) {
-            return res.status(400).json({ message: "Parameter line wajib ada" });
+            return res.status(400).json({ message: "Parameter line not found" });
         }
 
         const data = await ciltPressureService.getPressureCheck(line);
@@ -22,7 +22,7 @@ exports.getPressureCheck30Min = async (req, res) => {
         const { line } = req.query;
 
         if (!line) {
-            return res.status(400).json({ message: "Parameter line wajib ada" });
+            return res.status(400).json({ message: "Parameter line not found" });
         }
 
         const data = await ciltPressureService.getPressureCheck30Min(line);
