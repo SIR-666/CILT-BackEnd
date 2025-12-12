@@ -58,3 +58,6 @@ app.use("/custom", ciltCustomMetadataRoutes);
 
 const ciltPressureRoutes = require("./routes/ciltPressureRoutes");
 app.use("/", ciltPressureRoutes);
+
+const ciltCombiXGMasterRoutes = require("./routes/ciltCombiXGMasterRoutes");
+app.use("/", ciltCombiXGMasterRoutes);
