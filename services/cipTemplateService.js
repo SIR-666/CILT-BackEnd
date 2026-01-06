@@ -11,7 +11,6 @@ const getPool = require("../config/pool");
  */
 
 const cipTemplateService = {
-  
   /**
    * Get CIP Steps from master table (same for all lines)
    */
@@ -21,7 +20,7 @@ const cipTemplateService = {
       const result = await pool.request().query(
         `SELECT * FROM tb_CIP_steps_master WHERE is_active = 1 ORDER BY display_order`
       );
-      
+
       if (result.recordset.length === 0) {
         console.log("[getCipSteps] No data in master table, using fallback");
         return this.getFallbackCipSteps();
@@ -54,7 +53,9 @@ const cipTemplateService = {
       const pool = await getPool();
       // LINE A uses "LINE A", LINE B/C/D uses "LINE BCD"
       const lineType = lineCode === "LINE A" ? "LINE A" : "LINE BCD";
-      
+
+      console.log(`[getSpecialRecords] Fetching for lineType: ${lineType}`);
+
       const result = await pool.request()
         .input("lineType", sql.VarChar, lineType)
         .query(
@@ -64,12 +65,14 @@ const cipTemplateService = {
         );
 
       if (result.recordset.length === 0) {
-        console.log("[getSpecialRecords] No data for", lineType, ", using fallback");
+        console.log(`[getSpecialRecords] No data for ${lineType}, using fallback`);
         return this.getFallbackSpecialRecords(lineCode);
       }
 
+      console.log(`[getSpecialRecords] Found ${result.recordset.length} records for ${lineType}`);
+
       if (lineType === "LINE A") {
-        // COP, SOP, SIP records
+        // COP, SOP, SIP records with unified 'time' field
         return result.recordset.map((row) => ({
           stepType: row.step_type,
           time: row.time_setpoint?.toString() || "",
@@ -113,7 +116,7 @@ const cipTemplateService = {
   async getFlowRate(lineCode) {
     try {
       const pool = await getPool();
-      
+
       const result = await pool.request()
         .input("lineCode", sql.VarChar, lineCode)
         .query(
@@ -130,8 +133,8 @@ const cipTemplateService = {
           flowRateActual: "", // User fills this
         };
       }
-      
-      console.log("[getFlowRate] No data for", lineCode, ", using fallback");
+
+      console.log(`[getFlowRate] No data for ${lineCode}, using fallback`);
       return this.getFallbackFlowRate(lineCode);
     } catch (error) {
       console.error("[getFlowRate] Error:", error.message);
@@ -154,12 +157,12 @@ const cipTemplateService = {
 
       // Transform to array format for frontend
       return result.recordset.map((row) => {
-        const state = posisi === "Final" 
-          ? row.posisi_final_state 
+        const state = posisi === "Final"
+          ? row.posisi_final_state
           : row.posisi_intermediate_state;
-        
+
         const isChecked = state === 1 || state === true;
-        
+
         return {
           valveCode: row.valve_code,
           checked: isChecked,
@@ -174,6 +177,8 @@ const cipTemplateService = {
 
   /* Get complete template by line - "LINE A", "LINE B", "LINE C", or "LINE D" - "Final" or "Intermediate" (for valve config) */
   async getTemplateByLine(lineCode, posisi = "Final") {
+    console.log(`[getTemplateByLine] Fetching template for ${lineCode}, posisi: ${posisi}`);
+
     const [cipSteps, specialRecords, flowRate, valveConfig] = await Promise.all([
       this.getCipSteps(),
       this.getSpecialRecords(lineCode),
@@ -182,6 +187,15 @@ const cipTemplateService = {
     ]);
 
     const isLineA = lineCode === "LINE A";
+
+    console.log(`[getTemplateByLine] Template assembled:`, {
+      lineCode,
+      posisi,
+      cipStepsCount: cipSteps.length,
+      specialRecordsCount: specialRecords.length,
+      flowRate: flowRate.flowRateMin,
+      valveConfigCount: isLineA ? 0 : valveConfig.length,
+    });
 
     return {
       lineCode,
@@ -208,7 +222,7 @@ const cipTemplateService = {
 
   getFallbackSpecialRecords(lineCode) {
     const isLineA = lineCode === "LINE A";
-    
+
     if (isLineA) {
       return [
         { stepType: "COP", time: "67", tempMin: "105", tempMax: "128", hasTemperature: true, hasConcentration: false, tempActual: "", startTime: "", endTime: "" },

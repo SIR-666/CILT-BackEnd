@@ -43,16 +43,18 @@ exports.createCIPReport = async (req, res) => {
     const cipData = req.body;
     const isDraft = req.body.isDraft !== false;
 
-    console.log("[createCIPReport] Is Draft:", isDraft);
+    console.log("[createCIPReport] Creating report, Is Draft:", isDraft);
 
-    // Only line is required
+    // Only line is required - MINIMAL VALIDATION
     if (!cipData.line) {
       return res.status(400).json({ message: "Missing required field: line" });
     }
 
     // Auto-generate processOrder if not provided
     if (!cipData.processOrder) {
-      cipData.processOrder = `CIP-${Date.now()}`;
+      const timestamp = Date.now();
+      cipData.processOrder = `CIP-${timestamp}`;
+      console.log("[createCIPReport] Auto-generated processOrder:", cipData.processOrder);
     }
 
     // Set defaults
@@ -60,7 +62,7 @@ exports.createCIPReport = async (req, res) => {
       cipData.plant = "Milk Filling Packing";
     }
 
-    // Set status
+    // Set status based on isDraft
     const status = isDraft ? "In Progress" : "Complete";
     const dataWithStatus = {
       ...cipData,
@@ -69,27 +71,41 @@ exports.createCIPReport = async (req, res) => {
       submittedAt: !isDraft ? new Date() : null
     };
 
-    // Validate but don't block
-    const validationWarnings = validateCIPData ? validateCIPData(dataWithStatus) : [];
+    // NO VALIDATION - Just collect info for reference, don't block
+    let validationInfo = [];
+    try {
+      validationInfo = validateCIPData ? validateCIPData(dataWithStatus) : [];
+    } catch (validationError) {
+      console.warn("[createCIPReport] Validation check failed (non-blocking):", validationError.message);
+    }
 
-    // Create report
+    // Create report - ALWAYS SUCCEEDS regardless of validation
     const result = await cipService.createCIPReportWithCompliance(dataWithStatus, calculateComplianceScore);
 
     if (!result || !result.cipReport) {
       return res.status(500).json({ message: "Failed to create CIP report" });
     }
 
+    // Return success with optional info (NOT warnings)
     return res.status(201).json({
-      message: isDraft ? "CIP report saved as draft" : "CIP report submitted",
+      success: true,
+      message: isDraft ? "CIP report saved as draft" : "CIP report submitted successfully",
       data: result.cipReport,
       compliance: result.complianceScore,
-      warnings: validationWarnings.length > 0 ? validationWarnings : undefined,
+      // Send validation info only if explicitly requested
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
+        ? validationInfo 
+        : undefined,
       isDraft,
       status: dataWithStatus.status
     });
   } catch (error) {
     console.error("[createCIPReport] Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error",
+      error: error.message 
+    });
   }
 };
 
@@ -99,16 +115,21 @@ exports.updateCIPReport = async (req, res) => {
     const updateData = req.body;
     const isDraft = req.body.isDraft !== false;
 
+    console.log("[updateCIPReport] Updating report ID:", id, "Is Draft:", isDraft);
+
     const currentReport = await cipService.getCIPReportById(id);
     if (!currentReport) {
       return res.status(404).json({ message: "CIP report not found" });
     }
 
-    // Prevent editing submitted reports unless allowed
+    // Allow editing submitted reports if explicitly allowed
     if (currentReport.status === 'Complete' && !req.body.allowEditSubmitted) {
-      return res.status(400).json({ message: "Cannot edit submitted report" });
+      return res.status(400).json({ 
+        message: "Cannot edit submitted report. Contact admin if changes are needed." 
+      });
     }
 
+    // Determine status
     let status = currentReport.status;
     if (isDraft) {
       status = "In Progress";
@@ -120,27 +141,44 @@ exports.updateCIPReport = async (req, res) => {
       ...updateData,
       status,
       isDraft,
-      submittedAt: !isDraft ? new Date() : null
+      submittedAt: !isDraft ? new Date() : currentReport.submittedAt
     };
 
-    const validationWarnings = validateCIPData ? validateCIPData(dataWithStatus) : [];
+    // NO VALIDATION - Just collect info for reference, don't block
+    let validationInfo = [];
+    try {
+      validationInfo = validateCIPData ? validateCIPData(dataWithStatus) : [];
+    } catch (validationError) {
+      console.warn("[updateCIPReport] Validation check failed (non-blocking):", validationError.message);
+    }
+
+    // Update report - ALWAYS SUCCEEDS regardless of validation
     const result = await cipService.updateCIPReportWithCompliance(id, dataWithStatus, calculateComplianceScore);
 
     if (!result || !result.cipReport) {
-      return res.status(404).json({ message: "CIP report not found" });
+      return res.status(404).json({ message: "Failed to update CIP report" });
     }
 
+    // Return success with optional info (NOT warnings)
     return res.status(200).json({
-      message: isDraft ? "CIP report saved as draft" : "CIP report submitted",
+      success: true,
+      message: isDraft ? "CIP report updated as draft" : "CIP report updated successfully",
       data: result.cipReport,
       compliance: result.complianceScore,
-      warnings: validationWarnings.length > 0 ? validationWarnings : undefined,
+      // Send validation info only if explicitly requested
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
+        ? validationInfo 
+        : undefined,
       isDraft,
       status
     });
   } catch (error) {
     console.error("[updateCIPReport] Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error",
+      error: error.message 
+    });
   }
 };
 
@@ -180,12 +218,25 @@ exports.submitCIPReport = async (req, res) => {
       submittedAt: new Date()
     };
 
+    // NO VALIDATION - Just collect info for reference
+    let validationInfo = [];
+    try {
+      validationInfo = validateCIPData ? validateCIPData(updateData) : [];
+    } catch (validationError) {
+      console.warn("[submitCIPReport] Validation check failed (non-blocking):", validationError.message);
+    }
+
     const result = await cipService.updateCIPReportWithCompliance(id, updateData, calculateComplianceScore);
 
     return res.status(200).json({
+      success: true,
       message: "CIP report submitted successfully",
       data: result.cipReport,
-      compliance: result.complianceScore
+      compliance: result.complianceScore,
+      // Send validation info only if explicitly requested
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
+        ? validationInfo 
+        : undefined
     });
   } catch (error) {
     console.error("[submitCIPReport] Controller error:", error);
@@ -223,9 +274,9 @@ exports.rejectCIPReport = async (req, res) => {
 exports.getCIPTypes = async (req, res) => {
   try {
     const cipTypes = [
-      { id: 1, name: "CIP KITCHEN 1", value: "CIP_KITCHEN_1" },
-      { id: 2, name: "CIP KITCHEN 2", value: "CIP_KITCHEN_2" },
-      { id: 3, name: "CIP KITCHEN 3", value: "CIP_KITCHEN_3" },
+      { id: 1, name: "CIP KITCHEN 1", value: "CIP KITCHEN 1" },
+      { id: 2, name: "CIP KITCHEN 2", value: "CIP KITCHEN 2" },
+      { id: 3, name: "CIP KITCHEN 3", value: "CIP KITCHEN 3" },
     ];
     return res.status(200).json(cipTypes);
   } catch (error) {
@@ -355,7 +406,7 @@ exports.getFlowRateRequirements = async (req, res) => {
   }
 };
 
-// COMPLIANCE CHECK
+// COMPLIANCE CHECK (Optional - for admin/reporting only)
 exports.checkCIPCompliance = async (req, res) => {
   try {
     const id = req.params.id;
@@ -366,12 +417,13 @@ exports.checkCIPCompliance = async (req, res) => {
     }
 
     const complianceScore = calculateComplianceScore ? calculateComplianceScore(cipReport) : { score: 0 };
-    const validationWarnings = validateCIPData ? validateCIPData(cipReport) : [];
+    const validationInfo = validateCIPData ? validateCIPData(cipReport) : [];
 
     return res.status(200).json({
       reportId: id,
       compliance: complianceScore,
-      validationWarnings
+      validationInfo: validationInfo,
+      note: "This is for information only and does not affect report validity"
     });
   } catch (error) {
     console.error("[checkCIPCompliance] Error:", error);
