@@ -3,10 +3,18 @@ const getPool = require("../config/pool");
 
 /**
  * CIP Template Service
- * Handles fetching CIP master data from database
+ * Fetches template data from MASTER tables (uppercase CIP):
+ * - tb_CIP_steps_master
+ * - tb_CIP_special_records_master
+ * - tb_CIP_flow_rate_master
+ * - tb_CIP_valve_master
  */
+
 const cipTemplateService = {
-  /* Get CIP Steps (sama untuk semua LINE) */
+  
+  /**
+   * Get CIP Steps from master table (same for all lines)
+   */
   async getCipSteps() {
     try {
       const pool = await getPool();
@@ -14,6 +22,11 @@ const cipTemplateService = {
         `SELECT * FROM tb_CIP_steps_master WHERE is_active = 1 ORDER BY display_order`
       );
       
+      if (result.recordset.length === 0) {
+        console.log("[getCipSteps] No data in master table, using fallback");
+        return this.getFallbackCipSteps();
+      }
+
       return result.recordset.map((row) => ({
         stepNumber: row.step_number,
         stepName: row.step_name,
@@ -30,26 +43,28 @@ const cipTemplateService = {
         endTime: "",
       }));
     } catch (error) {
-      console.error("Error fetching CIP steps from tb_CIP_steps_master:", error);
+      console.error("[getCipSteps] Error:", error.message);
       return this.getFallbackCipSteps();
     }
   },
 
-  /* Get Special Records based on line type - "LINE A", "LINE B", "LINE C", "LINE D" */
+  /* Get Special Records from master table - "LINE A", "LINE B", "LINE C", or "LINE D" */
   async getSpecialRecords(lineCode) {
     try {
       const pool = await getPool();
-      // Normalize: "LINE A" -> "LINE A", "LINE B/C/D" -> "LINE BCD"
+      // LINE A uses "LINE A", LINE B/C/D uses "LINE BCD"
       const lineType = lineCode === "LINE A" ? "LINE A" : "LINE BCD";
       
       const result = await pool.request()
         .input("lineType", sql.VarChar, lineType)
         .query(
-          `SELECT * FROM tb_CIP_special_records_master WHERE line_type = @lineType AND is_active = 1 ORDER BY display_order`
+          `SELECT * FROM tb_CIP_special_records_master 
+           WHERE line_type = @lineType AND is_active = 1 
+           ORDER BY display_order`
         );
 
       if (result.recordset.length === 0) {
-        console.log(`No special records found for ${lineType}, using fallback`);
+        console.log("[getSpecialRecords] No data for", lineType, ", using fallback");
         return this.getFallbackSpecialRecords(lineCode);
       }
 
@@ -62,12 +77,13 @@ const cipTemplateService = {
           tempMax: row.temp_max?.toString() || "128",
           hasTemperature: row.has_temperature === 1 || row.has_temperature === true,
           hasConcentration: row.has_concentration === 1 || row.has_concentration === true,
+          // Fields to be filled by user
           tempActual: "",
           startTime: "",
           endTime: "",
         }));
       } else {
-        // DRYING, FOAMING, DISINFECT records
+        // DRYING, FOAMING, DISINFECT records for LINE B/C/D
         return result.recordset.map((row) => ({
           stepType: row.step_type,
           time: row.time_setpoint?.toString() || "",
@@ -80,6 +96,7 @@ const cipTemplateService = {
           concMax: row.conc_max?.toString() || null,
           hasTemperature: row.has_temperature === 1 || row.has_temperature === true,
           hasConcentration: row.has_concentration === 1 || row.has_concentration === true,
+          // Fields to be filled by user
           tempActual: "",
           concActual: "",
           startTime: "",
@@ -87,12 +104,12 @@ const cipTemplateService = {
         }));
       }
     } catch (error) {
-      console.error("Error fetching special records from tb_CIP_special_records_master:", error);
+      console.error("[getSpecialRecords] Error:", error.message);
       return this.getFallbackSpecialRecords(lineCode);
     }
   },
 
-  /* Get Flow Rate configuration by line - "LINE A", "LINE B", "LINE C", "LINE D" */
+  /* Get Flow Rate configuration from master table - "LINE A", "LINE B", "LINE C", or "LINE D" */
   async getFlowRate(lineCode) {
     try {
       const pool = await getPool();
@@ -100,7 +117,8 @@ const cipTemplateService = {
       const result = await pool.request()
         .input("lineCode", sql.VarChar, lineCode)
         .query(
-          `SELECT * FROM tb_CIP_flow_rate_master WHERE line_code = @lineCode AND is_active = 1`
+          `SELECT * FROM tb_CIP_flow_rate_master 
+           WHERE line_code = @lineCode AND is_active = 1`
         );
 
       if (result.recordset.length > 0) {
@@ -112,15 +130,16 @@ const cipTemplateService = {
           flowRateActual: "", // User fills this
         };
       }
-      console.log(`No flow rate found for ${lineCode}, using fallback`);
+      
+      console.log("[getFlowRate] No data for", lineCode, ", using fallback");
       return this.getFallbackFlowRate(lineCode);
     } catch (error) {
-      console.error("Error fetching flow rate from tb_CIP_flow_rate_master:", error);
+      console.error("[getFlowRate] Error:", error.message);
       return this.getFallbackFlowRate(lineCode);
     }
   },
 
-  /* Get Valve configuration - Final or Intermediate */
+  /* Get Valve configuration from master table - "Final" or "Intermediate" */
   async getValveConfig(posisi) {
     try {
       const pool = await getPool();
@@ -129,17 +148,16 @@ const cipTemplateService = {
       );
 
       if (result.recordset.length === 0) {
-        console.log(`No valve config found, using fallback`);
+        console.log("[getValveConfig] No data in master table, using fallback");
         return this.getFallbackValveConfig(posisi);
       }
 
       // Transform to array format for frontend
-      const valveArray = result.recordset.map((row) => {
+      return result.recordset.map((row) => {
         const state = posisi === "Final" 
           ? row.posisi_final_state 
           : row.posisi_intermediate_state;
         
-        // Convert BIT/number to boolean
         const isChecked = state === 1 || state === true;
         
         return {
@@ -148,15 +166,13 @@ const cipTemplateService = {
           label: `${row.valve_name} (${isChecked ? "Open" : "Close"})`,
         };
       });
-
-      return valveArray;
     } catch (error) {
-      console.error("Error fetching valve config from tb_CIP_valve_master:", error);
+      console.error("[getValveConfig] Error:", error.message);
       return this.getFallbackValveConfig(posisi);
     }
   },
 
-  /* Get complete template by line - "LINE A", "LINE B", "LINE C", "LINE D" - Final or Intermediate (for LINE B/C/D) */
+  /* Get complete template by line - "LINE A", "LINE B", "LINE C", or "LINE D" - "Final" or "Intermediate" (for valve config) */
   async getTemplateByLine(lineCode, posisi = "Final") {
     const [cipSteps, specialRecords, flowRate, valveConfig] = await Promise.all([
       this.getCipSteps(),
@@ -170,14 +186,14 @@ const cipTemplateService = {
     return {
       lineCode,
       posisi,
-      cipSteps, // Changed from 'steps' to 'cipSteps' for frontend compatibility
+      cipSteps,
       specialRecords,
       flowRate,
-      valveConfig: isLineA ? [] : valveConfig, // Return empty array for LINE A (no valves)
+      valveConfig: isLineA ? [] : valveConfig, // No valves for LINE A
     };
   },
 
-  // FALLBACK DATA (jika database tidak tersedia)
+  // FALLBACK DATA (if database is unavailable)
   getFallbackCipSteps() {
     return [
       { stepNumber: 1, stepName: "COLD RINSE", temperatureSetpointMin: "20", temperatureSetpointMax: "35", timeSetpoint: "8", concentrationMin: null, concentrationMax: null, temperatureActual: "", timeActual: "8", concentrationActual: "", startTime: "", endTime: "" },
@@ -194,18 +210,16 @@ const cipTemplateService = {
     const isLineA = lineCode === "LINE A";
     
     if (isLineA) {
-      // COP, SOP, SIP for LINE A
       return [
         { stepType: "COP", time: "67", tempMin: "105", tempMax: "128", hasTemperature: true, hasConcentration: false, tempActual: "", startTime: "", endTime: "" },
         { stepType: "SOP", time: "45", tempMin: "105", tempMax: "128", hasTemperature: true, hasConcentration: false, tempActual: "", startTime: "", endTime: "" },
         { stepType: "SIP", time: "60", tempMin: "105", tempMax: "128", hasTemperature: true, hasConcentration: false, tempActual: "", startTime: "", endTime: "" },
       ];
     } else {
-      // DRYING, FOAMING, DISINFECT for LINE B/C/D
       return [
         { stepType: "DRYING", time: "57", tempMin: "118", tempMax: "125", hasTemperature: true, hasConcentration: false, tempActual: "", startTime: "", endTime: "" },
-        { stepType: "FOAMING", time: "41", tempMin: null, tempMax: null, hasTemperature: false, hasConcentration: false, startTime: "", endTime: "" },
-        { stepType: "DISINFECT/SANITASI", time: "30", concMin: "0.3", concMax: "0.5", tempBC: "40", tempDMin: "20", tempDMax: "35", hasTemperature: true, hasConcentration: true, concActual: "", tempActual: "", startTime: "", endTime: "" },
+        { stepType: "FOAMING", time: "41", hasTemperature: false, hasConcentration: false, startTime: "", endTime: "" },
+        { stepType: "DISINFECT/SANITASI", time: "30", tempBC: "40", tempDMin: "20", tempDMax: "35", concMin: "0.3", concMax: "0.5", hasTemperature: true, hasConcentration: true, tempActual: "", concActual: "", startTime: "", endTime: "" },
       ];
     }
   },
@@ -217,7 +231,7 @@ const cipTemplateService = {
       "LINE C": { lineCode: "LINE C", flowRateMin: 9000, flowRateUnit: "L/H", flowRateActual: "" },
       "LINE D": { lineCode: "LINE D", flowRateMin: 6000, flowRateUnit: "L/H", flowRateActual: "" },
     };
-    return flowRates[lineCode] || { lineCode: lineCode, flowRateMin: 9000, flowRateUnit: "L/H", flowRateActual: "" };
+    return flowRates[lineCode] || { lineCode, flowRateMin: 9000, flowRateUnit: "L/H", flowRateActual: "" };
   },
 
   getFallbackValveConfig(posisi) {
