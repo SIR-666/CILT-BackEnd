@@ -73,7 +73,7 @@ exports.createCIPReport = async (req, res) => {
 
     // Set status based on isDraft flag
     let status = isDraft ? "In Progress" : "Complete";
-    
+
     // Override status if explicitly provided
     if (cipData.status) {
       status = cipData.status;
@@ -116,7 +116,7 @@ exports.createCIPReport = async (req, res) => {
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       message: "Internal server error",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -318,19 +318,49 @@ exports.getCIPStatusList = async (req, res) => {
 exports.getCIPStepTemplates = async (req, res) => {
   try {
     const { line, posisi } = req.query;
-    
+
+    console.log(`[getCIPStepTemplates] Fetching templates for line: ${line}, posisi: ${posisi}`);
+
     if (line) {
       // Get template for specific line
       const template = await cipTemplateService.getTemplateByLine(line, posisi || "Final");
-      return res.status(200).json(template);
+
+      console.log(`[getCIPStepTemplates] Template fetched:`, {
+        cipStepsCount: template.cipSteps?.length || 0,
+        specialRecordsCount: template.specialRecords?.length || 0,
+        flowRate: template.flowRate,
+        valveConfigCount: template.valveConfig?.length || 0,
+      });
+
+      // Return in format expected by frontend
+      return res.status(200).json({
+        success: true,
+        data: {
+          cipSteps: template.cipSteps,
+          specialRecords: template.specialRecords,
+          flowRate: template.flowRate,
+          valveConfig: template.valveConfig,
+        },
+        message: "Templates fetched successfully"
+      });
     }
-    
+
     // Return default steps if no line specified
     const steps = await cipTemplateService.getCipSteps();
-    return res.status(200).json({ steps });
+    return res.status(200).json({
+      success: true,
+      data: {
+        cipSteps: steps
+      },
+      message: "Default CIP steps fetched"
+    });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
+    });
   }
 };
 
@@ -341,26 +371,36 @@ exports.getCIPStepTemplates = async (req, res) => {
 exports.getValveConfigurations = async (req, res) => {
   try {
     const { posisi } = req.query;
-    
+
     if (posisi) {
       // Get specific posisi config
       const config = await cipTemplateService.getValveConfig(posisi);
-      return res.status(200).json({ [posisi]: config });
+      return res.status(200).json({
+        success: true,
+        data: config,
+        posisi
+      });
     }
-    
+
     // Return both configurations
     const [finalConfig, intermediateConfig] = await Promise.all([
       cipTemplateService.getValveConfig("Final"),
       cipTemplateService.getValveConfig("Intermediate")
     ]);
-    
+
     return res.status(200).json({
-      Final: finalConfig,
-      Intermediate: intermediateConfig
+      success: true,
+      data: {
+        Final: finalConfig,
+        Intermediate: intermediateConfig
+      }
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
 };
 
@@ -371,34 +411,40 @@ exports.getValveConfigurations = async (req, res) => {
 exports.getFlowRateRequirements = async (req, res) => {
   try {
     const { line } = req.query;
-    
+
     if (line) {
       // Get specific line flow rate
       const flowRate = await cipTemplateService.getFlowRate(line);
-      return res.status(200).json({ [line]: flowRate });
+      return res.status(200).json({
+        success: true,
+        data: flowRate,
+        line
+      });
     }
-    
-    // Return all flow rates
-    // LINE A = 12000, LINE B/C = 9000, LINE D = 6000
-    const requirements = {
-      "LINE A": {
-        flowRate: { min: 12000, unit: "L/H", description: "Flow A minimum" }
-      },
-      "LINE B": {
-        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
-      },
-      "LINE C": {
-        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
-      },
-      "LINE D": {
-        flowD: { min: 6000, unit: "L/H", description: "Flow D minimum" }
-      }
-    };
 
-    return res.status(200).json(requirements);
+    // Return all flow rates from database
+    const [lineA, lineB, lineC, lineD] = await Promise.all([
+      cipTemplateService.getFlowRate("LINE A"),
+      cipTemplateService.getFlowRate("LINE B"),
+      cipTemplateService.getFlowRate("LINE C"),
+      cipTemplateService.getFlowRate("LINE D"),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        "LINE A": lineA,
+        "LINE B": lineB,
+        "LINE C": lineC,
+        "LINE D": lineD,
+      }
+    });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
   }
 };
 
@@ -456,7 +502,7 @@ function generateRecommendations(warnings, compliance, line) {
   if (line === 'LINE A' && warnings.some(w => w.field === 'flowRate')) {
     recommendations.push("Check Flow A pump and valves - recommended minimum 12000 L/H");
   }
-  
+
   if (isBCDLine) {
     if (line === 'LINE D' && warnings.some(w => w.field === 'flowRateD')) {
       recommendations.push("Check Flow D pump and valves - recommended minimum 6000 L/H");
