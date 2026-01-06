@@ -9,28 +9,32 @@ async function getAllCIPReports(date, plant, line, processOrder, status, cipType
       SELECT 
         cr.id,
         cr.date,
-        cr.process_order,
+        cr.process_order as processOrder,
         cr.plant,
         cr.line,
-        cr.cip_type,
+        cr.cip_type as cipType,
         cr.status,
         cr.operator,
         cr.posisi,
-        cr.flow_rate,
-        cr.flow_rate_d,
-        cr.flow_rate_bc,
+        cr.flow_rate as flowRate,
+        cr.flow_rate_d as flowRateD,
+        cr.flow_rate_bc as flowRateBC,
         cr.notes,
-        cr.kode_operator,
-        cr.kode_teknisi,
+        ISNULL(cr.approval_coor, 0) as approval_coor,
+        ISNULL(cr.approval_spv, 0) as approval_spv,
+        cr.approval_coor_by,
+        cr.approval_coor_at,
+        cr.approval_spv_by,
+        cr.approval_spv_at,
         cr.created_at as createdAt,
-        cr.updated_at as updatedAt
+        cr.updated_at as updatedAt,
+        cr.created_by as createdBy
       FROM tb_cip_reports cr
       WHERE 1=1
     `;
 
     const request = pool.request();
 
-    // Apply filters
     if (date) {
       query += ` AND CAST(cr.date AS DATE) = @date`;
       request.input("date", sql.Date, date);
@@ -88,24 +92,29 @@ async function getCIPReportById(id) {
         SELECT 
           cr.id,
           cr.date,
-          cr.process_order,
+          cr.process_order as processOrder,
           cr.plant,
           cr.line,
-          cr.cip_type,
+          cr.cip_type as cipType,
           cr.status,
           cr.operator,
           cr.posisi,
-          cr.flow_rate,
-          cr.flow_rate_d,
-          cr.flow_rate_bc,
+          cr.flow_rate as flowRate,
+          cr.flow_rate_d as flowRateD,
+          cr.flow_rate_bc as flowRateBC,
           cr.valve_a_status,
           cr.valve_b_status,
           cr.valve_c_status,
           cr.notes,
-          cr.kode_operator,
-          cr.kode_teknisi,
+          ISNULL(cr.approval_coor, 0) as approval_coor,
+          ISNULL(cr.approval_spv, 0) as approval_spv,
+          cr.approval_coor_by,
+          cr.approval_coor_at,
+          cr.approval_spv_by,
+          cr.approval_spv_at,
           cr.created_at as createdAt,
-          cr.updated_at as updatedAt
+          cr.updated_at as updatedAt,
+          cr.created_by as createdBy
         FROM tb_cip_reports cr
         WHERE cr.id = @id
       `);
@@ -154,17 +163,20 @@ async function getCIPReportById(id) {
           SELECT 
             cc.id,
             cc.step_type as stepType,
-            cc.time_67_min as time67Min,
-            cc.time_45_min as time45Min,
-            cc.time_60_min as time60Min,
+            cc.time_minutes as time,
             cc.start_time as startTime,
             cc.end_time as endTime,
             cc.temp_min as tempMin,
             cc.temp_max as tempMax,
-            cc.temp_actual as tempActual,
-            cc.kode
+            cc.temp_actual as tempActual
           FROM tb_cip_cop_records cc
           WHERE cc.cip_report_id = @cipReportId
+          ORDER BY 
+            CASE cc.step_type 
+              WHEN 'COP' THEN 1
+              WHEN 'SOP' THEN 2
+              WHEN 'SIP' THEN 3
+            END
         `);
 
       formattedReport.copRecords = copResult.recordset;
@@ -189,8 +201,7 @@ async function getCIPReportById(id) {
             cs.conc_actual as concActual,
             cs.time_minutes as time,
             cs.start_time as startTime,
-            cs.end_time as endTime,
-            cs.kode
+            cs.end_time as endTime
           FROM tb_cip_special_records cs
           WHERE cs.cip_report_id = @cipReportId
           ORDER BY 
@@ -208,8 +219,8 @@ async function getCIPReportById(id) {
         C: report.valve_c_status
       };
       formattedReport.flowRates = {
-        flowD: report.flow_rate_d,
-        flowBC: report.flow_rate_bc
+        flowD: report.flowRateD,
+        flowBC: report.flowRateBC
       };
     }
 
@@ -227,153 +238,170 @@ async function createCIPReport(cipData) {
   try {
     await transaction.begin();
 
-    // Determine if this is a BCD line
     const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(cipData.line);
 
-    // Insert main CIP report
+    // Insert main CIP report (tanpa kodeOperator dan kodeTeknisi)
     console.log("Inserting main CIP report...");
     const reportRequest = new sql.Request(transaction);
 
-    // Common fields
     reportRequest
       .input("date", sql.Date, cipData.date || new Date())
       .input("processOrder", sql.VarChar, cipData.processOrder)
       .input("plant", sql.VarChar, cipData.plant)
       .input("line", sql.VarChar, cipData.line)
-      .input("cipType", sql.VarChar, cipData.cipType)
+      .input("cipType", sql.VarChar, cipData.cipType || null)
+      .input("operator", sql.VarChar, cipData.operator || null)
+      .input("posisi", sql.VarChar, cipData.posisi || null)
+      .input("notes", sql.VarChar, cipData.notes || null)
       .input("status", sql.VarChar, cipData.status || 'In Progress')
-      .input("operator", sql.VarChar, cipData.operator)
-      .input("posisi", sql.VarChar, cipData.posisi)
-      .input("notes", sql.Text, cipData.notes || '')
-      .input("kodeOperator", sql.VarChar, cipData.kodeOperator || '')
-      .input("kodeTeknisi", sql.VarChar, cipData.kodeTeknisi || '');
+      .input("createdBy", sql.VarChar, cipData.createdBy || cipData.operator || null);
 
-    let insertQuery = `
-      INSERT INTO tb_cip_reports 
-        (date, process_order, plant, line, cip_type, status, operator, posisi, notes, kode_operator, kode_teknisi`;
-
-    let valuesQuery = `
-      VALUES 
-        (@date, @processOrder, @plant, @line, @cipType, @status, @operator, @posisi, @notes, @kodeOperator, @kodeTeknisi`;
-
-    // Add line-specific fields
+    // Add flow rate based on line
     if (isBCDLine) {
-      reportRequest
-        .input("flowRateD", sql.Decimal(10, 2), cipData.flowRateD)
-        // Hanya input flowRateBC jika LINE B/C
-        .input("flowRateBC", sql.Decimal(10, 2), ['LINE B', 'LINE C'].includes(cipData.line) ? cipData.flowRateBC : null)
-        .input("valveAStatus", sql.Bit, cipData.valvePositions?.A || false)
-        .input("valveBStatus", sql.Bit, cipData.valvePositions?.B || false)
-        .input("valveCStatus", sql.Bit, cipData.valvePositions?.C || false);
-
-      insertQuery += `, flow_rate_d${['LINE B', 'LINE C'].includes(cipData.line) ? ', flow_rate_bc' : ''}, valve_a_status, valve_b_status, valve_c_status`;
-      valuesQuery += `, @flowRateD${['LINE B', 'LINE C'].includes(cipData.line) ? ', @flowRateBC' : ''}, @valveAStatus, @valveBStatus, @valveCStatus`;
+      if (cipData.line === 'LINE D') {
+        reportRequest.input("flowRateD", sql.Float, cipData.flowRateD || null);
+        reportRequest.input("flowRateBC", sql.Float, null);
+      } else {
+        reportRequest.input("flowRateBC", sql.Float, cipData.flowRateBC || null);
+        reportRequest.input("flowRateD", sql.Float, null);
+      }
+      reportRequest.input("flowRate", sql.Float, null);
+      
+      // Valve positions
+      reportRequest.input("valveA", sql.Bit, cipData.valvePositions?.A || false);
+      reportRequest.input("valveB", sql.Bit, cipData.valvePositions?.B || false);
+      reportRequest.input("valveC", sql.Bit, cipData.valvePositions?.C || false);
     } else {
-      reportRequest.input("flowRate", sql.Decimal(10, 2), cipData.flowRate);
-      insertQuery += `, flow_rate`;
-      valuesQuery += `, @flowRate`;
+      reportRequest.input("flowRate", sql.Float, cipData.flowRate || null);
+      reportRequest.input("flowRateD", sql.Float, null);
+      reportRequest.input("flowRateBC", sql.Float, null);
+      reportRequest.input("valveA", sql.Bit, null);
+      reportRequest.input("valveB", sql.Bit, null);
+      reportRequest.input("valveC", sql.Bit, null);
     }
 
-    insertQuery += `)` + valuesQuery + `);
-      SELECT SCOPE_IDENTITY() AS id;`;
+    const insertReportQuery = `
+      INSERT INTO tb_cip_reports (
+        date, process_order, plant, line, cip_type, 
+        operator, posisi, flow_rate, flow_rate_d, flow_rate_bc,
+        valve_a_status, valve_b_status, valve_c_status,
+        notes, status, created_by, created_at, updated_at
+      )
+      OUTPUT INSERTED.id
+      VALUES (
+        @date, @processOrder, @plant, @line, @cipType,
+        @operator, @posisi, @flowRate, @flowRateD, @flowRateBC,
+        @valveA, @valveB, @valveC,
+        @notes, @status, @createdBy, GETDATE(), GETDATE()
+      )
+    `;
 
-    const reportResult = await reportRequest.query(insertQuery);
+    const reportResult = await reportRequest.query(insertReportQuery);
     const cipReportId = reportResult.recordset[0].id;
+    console.log("Created CIP report with ID:", cipReportId);
 
-    // Insert CIP steps if provided
+    // Insert CIP steps
     if (cipData.steps && cipData.steps.length > 0) {
+      console.log("Inserting CIP steps...");
       for (const step of cipData.steps) {
         const stepRequest = new sql.Request(transaction);
         await stepRequest
           .input("cipReportId", sql.Int, cipReportId)
           .input("stepNumber", sql.Int, step.stepNumber)
           .input("stepName", sql.VarChar, step.stepName)
-          .input("temperatureSetpointMin", sql.Decimal(5, 2), step.temperatureSetpointMin)
-          .input("temperatureSetpointMax", sql.Decimal(5, 2), step.temperatureSetpointMax)
-          .input("temperatureActual", sql.Decimal(5, 2), step.temperatureActual)
-          .input("timeSetpoint", sql.Int, step.timeSetpoint)
-          .input("timeActual", sql.Int, step.timeActual)
-          .input("concentration", sql.Decimal(5, 2), step.concentration)
-          .input("concentrationActual", sql.Decimal(5, 2), step.concentrationActual)
+          .input("temperatureSetpointMin", sql.Float, step.temperatureSetpointMin || null)
+          .input("temperatureSetpointMax", sql.Float, step.temperatureSetpointMax || null)
+          .input("temperatureActual", sql.Float, step.temperatureActual || null)
+          .input("timeSetpoint", sql.Int, step.timeSetpoint || null)
+          .input("timeActual", sql.Int, step.timeActual || null)
+          .input("concentration", sql.Float, step.concentration || null)
+          .input("concentrationActual", sql.Float, step.concentrationActual || null)
           .input("startTime", sql.VarChar, step.startTime || null)
           .input("endTime", sql.VarChar, step.endTime || null)
           .query(`
-            INSERT INTO tb_cip_step_records 
-              (cip_report_id, step_number, step_name, temperature_setpoint_min, temperature_setpoint_max,
-               temperature_actual, time_setpoint, time_actual, concentration, concentration_actual, 
-               start_time, end_time)
-            VALUES 
-              (@cipReportId, @stepNumber, @stepName, @temperatureSetpointMin, @temperatureSetpointMax,
-               @temperatureActual, @timeSetpoint, @timeActual, @concentration, @concentrationActual,
-               @startTime, @endTime)
+            INSERT INTO tb_cip_step_records (
+              cip_report_id, step_number, step_name,
+              temperature_setpoint_min, temperature_setpoint_max, temperature_actual,
+              time_setpoint, time_actual, concentration, concentration_actual,
+              start_time, end_time
+            )
+            VALUES (
+              @cipReportId, @stepNumber, @stepName,
+              @temperatureSetpointMin, @temperatureSetpointMax, @temperatureActual,
+              @timeSetpoint, @timeActual, @concentration, @concentrationActual,
+              @startTime, @endTime
+            )
           `);
       }
     }
 
     // Insert line-specific records
-    if (isBCDLine) {
-      // Insert special records for BCD lines
-      if (cipData.specialRecords && cipData.specialRecords.length > 0) {
-        for (const record of cipData.specialRecords) {
-          const specialRequest = new sql.Request(transaction);
-          await specialRequest
-            .input("cipReportId", sql.Int, cipReportId)
-            .input("stepType", sql.VarChar, record.stepType)
-            .input("tempMin", sql.Decimal(5, 2), record.tempMin || null)
-            .input("tempMax", sql.Decimal(5, 2), record.tempMax || null)
-            .input("tempActual", sql.Decimal(5, 2), record.tempActual || null)
-            .input("tempBC", sql.Decimal(5, 2), record.tempBC || null)
-            .input("tempDMin", sql.Decimal(5, 2), record.tempDMin || null)
-            .input("tempDMax", sql.Decimal(5, 2), record.tempDMax || null)
-            .input("concMin", sql.Decimal(5, 2), record.concMin || null)
-            .input("concMax", sql.Decimal(5, 2), record.concMax || null)
-            .input("concActual", sql.Decimal(5, 2), record.concActual || null)
-            .input("timeMinutes", sql.Int, record.time || null)
-            .input("startTime", sql.VarChar, record.startTime || null)
-            .input("endTime", sql.VarChar, record.endTime || null)
-            .input("kode", sql.VarChar, record.kode || '')
-            .query(`
-              INSERT INTO tb_cip_special_records 
-                (cip_report_id, step_type, temp_min, temp_max, temp_actual,
-                 temp_bc, temp_d_min, temp_d_max, conc_min, conc_max, conc_actual,
-                 time_minutes, start_time, end_time, kode)
-              VALUES 
-                (@cipReportId, @stepType, @tempMin, @tempMax, @tempActual,
-                 @tempBC, @tempDMin, @tempDMax, @concMin, @concMax, @concActual,
-                 @timeMinutes, @startTime, @endTime, @kode)
-            `);
-        }
+    if (cipData.line === 'LINE A' && cipData.copRecords && cipData.copRecords.length > 0) {
+      // Insert COP/SOP/SIP records with unified `time` field
+      console.log("Inserting COP records...");
+      for (const cop of cipData.copRecords) {
+        const copRequest = new sql.Request(transaction);
+        await copRequest
+          .input("cipReportId", sql.Int, cipReportId)
+          .input("stepType", sql.VarChar, cop.stepType)
+          .input("time", sql.Int, cop.time || null)
+          .input("startTime", sql.VarChar, cop.startTime || null)
+          .input("endTime", sql.VarChar, cop.endTime || null)
+          .input("tempMin", sql.Float, cop.tempMin || 105)
+          .input("tempMax", sql.Float, cop.tempMax || 128)
+          .input("tempActual", sql.Float, cop.tempActual || null)
+          .query(`
+            INSERT INTO tb_cip_cop_records (
+              cip_report_id, step_type, time_minutes,
+              start_time, end_time, temp_min, temp_max, temp_actual
+            )
+            VALUES (
+              @cipReportId, @stepType, @time,
+              @startTime, @endTime, @tempMin, @tempMax, @tempActual
+            )
+          `);
       }
-    } else {
-      // Insert COP records for LINE A
-      if (cipData.copRecords && cipData.copRecords.length > 0) {
-        for (const cop of cipData.copRecords) {
-          const copRequest = new sql.Request(transaction);
-          await copRequest
-            .input("cipReportId", sql.Int, cipReportId)
-            .input("stepType", sql.VarChar, cop.stepType)
-            .input("time67Min", sql.Int, cop.time67Min)
-            .input("time45Min", sql.Int, cop.time45Min)
-            .input("time60Min", sql.Int, cop.time60Min)
-            .input("startTime", sql.VarChar, cop.startTime || null)
-            .input("endTime", sql.VarChar, cop.endTime || null)
-            .input("tempMin", sql.Decimal(5, 2), cop.tempMin)
-            .input("tempMax", sql.Decimal(5, 2), cop.tempMax)
-            .input("tempActual", sql.Decimal(5, 2), cop.tempActual)
-            .input("kode", sql.VarChar, cop.kode)
-            .query(`
-              INSERT INTO tb_cip_cop_records 
-                (cip_report_id, step_type, time_67_min, time_45_min, time_60_min,
-                 start_time, end_time, temp_min, temp_max, temp_actual, kode)
-              VALUES 
-                (@cipReportId, @stepType, @time67Min, @time45Min, @time60Min,
-                 @startTime, @endTime, @tempMin, @tempMax, @tempActual, @kode)
-            `);
-        }
+    } else if (isBCDLine && cipData.specialRecords && cipData.specialRecords.length > 0) {
+      // Insert special records
+      console.log("Inserting special records...");
+      for (const record of cipData.specialRecords) {
+        const specialRequest = new sql.Request(transaction);
+        await specialRequest
+          .input("cipReportId", sql.Int, cipReportId)
+          .input("stepType", sql.VarChar, record.stepType)
+          .input("time", sql.Int, record.time || null)
+          .input("tempMin", sql.Float, record.tempMin || null)
+          .input("tempMax", sql.Float, record.tempMax || null)
+          .input("tempActual", sql.Float, record.tempActual || null)
+          .input("tempBC", sql.Float, record.tempBC || null)
+          .input("tempDMin", sql.Float, record.tempDMin || null)
+          .input("tempDMax", sql.Float, record.tempDMax || null)
+          .input("concMin", sql.Float, record.concMin || null)
+          .input("concMax", sql.Float, record.concMax || null)
+          .input("concActual", sql.Float, record.concActual || null)
+          .input("startTime", sql.VarChar, record.startTime || null)
+          .input("endTime", sql.VarChar, record.endTime || null)
+          .query(`
+            INSERT INTO tb_cip_special_records (
+              cip_report_id, step_type, time_minutes,
+              temp_min, temp_max, temp_actual,
+              temp_bc, temp_d_min, temp_d_max,
+              conc_min, conc_max, conc_actual,
+              start_time, end_time
+            )
+            VALUES (
+              @cipReportId, @stepType, @time,
+              @tempMin, @tempMax, @tempActual,
+              @tempBC, @tempDMin, @tempDMax,
+              @concMin, @concMax, @concActual,
+              @startTime, @endTime
+            )
+          `);
       }
     }
 
     await transaction.commit();
+    console.log("Transaction committed successfully");
 
     // Return the created report
     return await getCIPReportById(cipReportId);
@@ -384,259 +412,10 @@ async function createCIPReport(cipData) {
   }
 }
 
-// New method that includes compliance score calculation within transaction
 async function createCIPReportWithCompliance(cipData, calculateComplianceScore) {
-  const pool = await getPool();
-  const transaction = new sql.Transaction(pool);
-
-  try {
-    console.log("Starting transaction...");
-    await transaction.begin();
-    console.log("Transaction started");
-
-    // Determine if this is a BCD line
-    const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(cipData.line);
-
-    // Build the insert query based on line type
-    const reportRequest = new sql.Request(transaction);
-
-    // Common fields
-    reportRequest
-      .input("date", sql.Date, cipData.date || new Date())
-      .input("processOrder", sql.VarChar, cipData.processOrder)
-      .input("plant", sql.VarChar, cipData.plant)
-      .input("line", sql.VarChar, cipData.line)
-      .input("cipType", sql.VarChar, cipData.cipType)
-      .input("status", sql.VarChar, cipData.status || 'In Progress')
-      .input("operator", sql.VarChar, cipData.operator)
-      .input("posisi", sql.VarChar, cipData.posisi)
-      .input("notes", sql.Text, cipData.notes)
-      .input("kodeOperator", sql.VarChar, cipData.kodeOperator)
-      .input("kodeTeknisi", sql.VarChar, cipData.kodeTeknisi);
-
-    let insertQuery = `
-      INSERT INTO tb_cip_reports 
-        (date, process_order, plant, line, cip_type, status, operator, posisi, notes, kode_operator, kode_teknisi`;
-
-    let valuesQuery = `
-      VALUES 
-        (@date, @processOrder, @plant, @line, @cipType, @status, @operator, @posisi, @notes, @kodeOperator, @kodeTeknisi`;
-
-    // Add line-specific fields
-    if (isBCDLine) {
-      reportRequest
-        .input("flowRateD", sql.Decimal(10, 2), cipData.flowRateD)
-        // Hanya input flowRateBC jika LINE B/C
-        .input("flowRateBC", sql.Decimal(10, 2), ['LINE B', 'LINE C'].includes(cipData.line) ? cipData.flowRateBC : null)
-        .input("valveAStatus", sql.Bit, cipData.valvePositions?.A || false)
-        .input("valveBStatus", sql.Bit, cipData.valvePositions?.B || false)
-        .input("valveCStatus", sql.Bit, cipData.valvePositions?.C || false);
-
-      insertQuery += `, flow_rate_d${['LINE B', 'LINE C'].includes(cipData.line) ? ', flow_rate_bc' : ''}, valve_a_status, valve_b_status, valve_c_status`;
-      valuesQuery += `, @flowRateD${['LINE B', 'LINE C'].includes(cipData.line) ? ', @flowRateBC' : ''}, @valveAStatus, @valveBStatus, @valveCStatus`;
-    } else {
-      reportRequest.input("flowRate", sql.Decimal(10, 2), cipData.flowRate);
-      insertQuery += `, flow_rate`;
-      valuesQuery += `, @flowRate`;
-    }
-
-    insertQuery += `)` + valuesQuery + `);
-      SELECT SCOPE_IDENTITY() AS id;`;
-
-    const reportResult = await reportRequest.query(insertQuery);
-
-    console.log("Main report inserted, ID:", reportResult.recordset[0].id);
-    const cipReportId = reportResult.recordset[0].id;
-
-    // Create a temporary object to store the data for compliance calculation
-    const tempCipData = {
-      ...cipData,
-      id: cipReportId,
-      steps: [],
-      copRecords: [],
-      specialRecords: []
-    };
-
-    // Insert CIP steps (same for all lines)
-    if (cipData.steps && cipData.steps.length > 0) {
-      console.log(`Inserting ${cipData.steps.length} CIP steps...`);
-      for (const [index, step] of cipData.steps.entries()) {
-        try {
-          console.log(`Inserting step ${index + 1}/${cipData.steps.length}:`, {
-            stepNumber: step.stepNumber,
-            stepName: step.stepName,
-            startTime: step.startTime,
-            endTime: step.endTime
-          });
-
-          const stepRequest = new sql.Request(transaction);
-          await stepRequest
-            .input("cipReportId", sql.Int, cipReportId)
-            .input("stepNumber", sql.Int, step.stepNumber)
-            .input("stepName", sql.VarChar, step.stepName)
-            .input("temperatureSetpointMin", sql.Decimal(5, 2), step.temperatureSetpointMin || null)
-            .input("temperatureSetpointMax", sql.Decimal(5, 2), step.temperatureSetpointMax || null)
-            .input("temperatureActual", sql.Decimal(5, 2), step.temperatureActual || null)
-            .input("timeSetpoint", sql.Int, step.timeSetpoint || null)
-            .input("timeActual", sql.Int, step.timeActual || null)
-            .input("concentration", sql.Decimal(5, 2), step.concentration || null)
-            .input("concentrationActual", sql.Decimal(5, 2), step.concentrationActual || null)
-            .input("startTime", sql.VarChar, step.startTime || null)
-            .input("endTime", sql.VarChar, step.endTime || null)
-            .query(`
-              INSERT INTO tb_cip_step_records 
-                (cip_report_id, step_number, step_name, temperature_setpoint_min, temperature_setpoint_max,
-                 temperature_actual, time_setpoint, time_actual, concentration, concentration_actual, 
-                 start_time, end_time)
-              VALUES 
-                (@cipReportId, @stepNumber, @stepName, @temperatureSetpointMin, @temperatureSetpointMax,
-                 @temperatureActual, @timeSetpoint, @timeActual, @concentration, @concentrationActual,
-                 @startTime, @endTime)
-            `);
-
-          console.log(`Step ${index + 1} inserted successfully`);
-          tempCipData.steps.push(step);
-        } catch (stepError) {
-          console.error(`Error inserting step ${index + 1}:`, stepError);
-          throw stepError;
-        }
-      }
-      console.log("All steps inserted successfully");
-    }
-
-    // Insert line-specific records
-    if (isBCDLine) {
-      // Insert special records for BCD lines
-      if (cipData.specialRecords && cipData.specialRecords.length > 0) {
-        console.log(`Inserting ${cipData.specialRecords.length} special records...`);
-        for (const [index, record] of cipData.specialRecords.entries()) {
-          try {
-            console.log(`Inserting special record ${index + 1}/${cipData.specialRecords.length}:`, {
-              stepType: record.stepType,
-              startTime: record.startTime,
-              endTime: record.endTime
-            });
-
-            const specialRequest = new sql.Request(transaction);
-            await specialRequest
-              .input("cipReportId", sql.Int, cipReportId)
-              .input("stepType", sql.VarChar, record.stepType)
-              .input("tempMin", sql.Decimal(5, 2), record.tempMin || null)
-              .input("tempMax", sql.Decimal(5, 2), record.tempMax || null)
-              .input("tempActual", sql.Decimal(5, 2), record.tempActual || null)
-              .input("tempBC", sql.Decimal(5, 2), record.tempBC || null)
-              .input("tempDMin", sql.Decimal(5, 2), record.tempDMin || null)
-              .input("tempDMax", sql.Decimal(5, 2), record.tempDMax || null)
-              .input("concMin", sql.Decimal(5, 2), record.concMin || null)
-              .input("concMax", sql.Decimal(5, 2), record.concMax || null)
-              .input("concActual", sql.Decimal(5, 2), record.concActual || null)
-              .input("timeMinutes", sql.Int, record.time || null)
-              .input("startTime", sql.VarChar, record.startTime || null)
-              .input("endTime", sql.VarChar, record.endTime || null)
-              .input("kode", sql.VarChar, record.kode || '')
-              .query(`
-                INSERT INTO tb_cip_special_records 
-                  (cip_report_id, step_type, temp_min, temp_max, temp_actual,
-                   temp_bc, temp_d_min, temp_d_max, conc_min, conc_max, conc_actual,
-                   time_minutes, start_time, end_time, kode)
-                VALUES 
-                  (@cipReportId, @stepType, @tempMin, @tempMax, @tempActual,
-                   @tempBC, @tempDMin, @tempDMax, @concMin, @concMax, @concActual,
-                   @timeMinutes, @startTime, @endTime, @kode)
-              `);
-
-            console.log(`Special record ${index + 1} inserted successfully`);
-            tempCipData.specialRecords.push(record);
-          } catch (specialError) {
-            console.error(`Error inserting special record ${index + 1}:`, specialError);
-            throw specialError;
-          }
-        }
-        console.log("All special records inserted successfully");
-      }
-    } else {
-      // Insert COP records for LINE A
-      if (cipData.copRecords && cipData.copRecords.length > 0) {
-        console.log(`Inserting ${cipData.copRecords.length} COP records...`);
-        for (const [index, cop] of cipData.copRecords.entries()) {
-          try {
-            console.log(`Inserting COP record ${index + 1}/${cipData.copRecords.length}:`, {
-              stepType: cop.stepType,
-              startTime: cop.startTime,
-              endTime: cop.endTime
-            });
-
-            const copRequest = new sql.Request(transaction);
-            await copRequest
-              .input("cipReportId", sql.Int, cipReportId)
-              .input("stepType", sql.VarChar, cop.stepType)
-              .input("time67Min", sql.Int, cop.time67Min || null)
-              .input("time45Min", sql.Int, cop.time45Min || null)
-              .input("time60Min", sql.Int, cop.time60Min || null)
-              .input("startTime", sql.VarChar, cop.startTime || null)
-              .input("endTime", sql.VarChar, cop.endTime || null)
-              .input("tempMin", sql.Decimal(5, 2), cop.tempMin || null)
-              .input("tempMax", sql.Decimal(5, 2), cop.tempMax || null)
-              .input("tempActual", sql.Decimal(5, 2), cop.tempActual || null)
-              .input("kode", sql.VarChar, cop.kode || '')
-              .query(`
-                INSERT INTO tb_cip_cop_records 
-                  (cip_report_id, step_type, time_67_min, time_45_min, time_60_min,
-                   start_time, end_time, temp_min, temp_max, temp_actual, kode)
-                VALUES 
-                  (@cipReportId, @stepType, @time67Min, @time45Min, @time60Min,
-                   @startTime, @endTime, @tempMin, @tempMax, @tempActual, @kode)
-              `);
-
-            console.log(`COP record ${index + 1} inserted successfully`);
-            tempCipData.copRecords.push(cop);
-          } catch (copError) {
-            console.error(`Error inserting COP record ${index + 1}:`, copError);
-            throw copError;
-          }
-        }
-        console.log("All COP records inserted successfully");
-      }
-    }
-
-    // Calculate compliance score before committing
-    let complianceScore = null;
-    try {
-      console.log("Calculating compliance score...");
-      complianceScore = calculateComplianceScore(tempCipData);
-      console.log("Compliance score calculated:", complianceScore);
-    } catch (complianceError) {
-      console.error("Error calculating compliance score:", complianceError);
-    }
-
-    console.log("Committing transaction...");
-    await transaction.commit();
-    console.log("Transaction committed successfully");
-
-    // Fetch the complete report after commit
-    console.log("Fetching complete report...");
-    const cipReport = await getCIPReportById(cipReportId);
-
-    return {
-      cipReport,
-      complianceScore
-    };
-  } catch (error) {
-    console.error("Error in createCIPReportWithCompliance:", error);
-    console.log("Rolling back transaction...");
-    await transaction.rollback();
-    console.log("Transaction rolled back");
-    console.error("Error details:", {
-      message: error.message,
-      code: error.code,
-      state: error.state,
-      class: error.class,
-      lineNumber: error.lineNumber,
-      serverName: error.serverName,
-      procName: error.procName
-    });
-    throw error;
-  }
+  const cipReport = await createCIPReport(cipData);
+  const complianceScore = calculateComplianceScore(cipReport);
+  return { cipReport, complianceScore };
 }
 
 async function updateCIPReport(id, updateData) {
@@ -646,217 +425,176 @@ async function updateCIPReport(id, updateData) {
   try {
     await transaction.begin();
 
-    // Determine if this is a BCD line
     const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(updateData.line);
 
-    // Build update query dynamically
-    const updateFields = [];
-    const request = new sql.Request(transaction);
-    request.input("id", sql.Int, id);
+    // Update main CIP report
+    const reportRequest = new sql.Request(transaction);
+    reportRequest
+      .input("id", sql.Int, id)
+      .input("date", sql.Date, updateData.date || new Date())
+      .input("processOrder", sql.VarChar, updateData.processOrder)
+      .input("plant", sql.VarChar, updateData.plant)
+      .input("line", sql.VarChar, updateData.line)
+      .input("cipType", sql.VarChar, updateData.cipType || null)
+      .input("operator", sql.VarChar, updateData.operator || null)
+      .input("posisi", sql.VarChar, updateData.posisi || null)
+      .input("notes", sql.VarChar, updateData.notes || null)
+      .input("status", sql.VarChar, updateData.status || 'In Progress');
 
-    // Common fields update
-    if (updateData.date !== undefined) {
-      updateFields.push("date = @date");
-      request.input("date", sql.Date, updateData.date);
-    }
-    if (updateData.processOrder !== undefined) {
-      updateFields.push("process_order = @processOrder");
-      request.input("processOrder", sql.VarChar, updateData.processOrder);
-    }
-    if (updateData.plant !== undefined) {
-      updateFields.push("plant = @plant");
-      request.input("plant", sql.VarChar, updateData.plant);
-    }
-    if (updateData.line !== undefined) {
-      updateFields.push("line = @line");
-      request.input("line", sql.VarChar, updateData.line);
-    }
-    if (updateData.cipType !== undefined) {
-      updateFields.push("cip_type = @cipType");
-      request.input("cipType", sql.VarChar, updateData.cipType);
-    }
-    if (updateData.status !== undefined) {
-      updateFields.push("status = @status");
-      request.input("status", sql.VarChar, updateData.status);
-    }
-    if (updateData.operator !== undefined) {
-      updateFields.push("operator = @operator");
-      request.input("operator", sql.VarChar, updateData.operator);
-    }
-    if (updateData.posisi !== undefined) {
-      updateFields.push("posisi = @posisi");
-      request.input("posisi", sql.VarChar, updateData.posisi);
-    }
-    if (updateData.notes !== undefined) {
-      updateFields.push("notes = @notes");
-      request.input("notes", sql.Text, updateData.notes);
-    }
-    if (updateData.kodeOperator !== undefined) {
-      updateFields.push("kode_operator = @kodeOperator");
-      request.input("kodeOperator", sql.VarChar, updateData.kodeOperator);
-    }
-    if (updateData.kodeTeknisi !== undefined) {
-      updateFields.push("kode_teknisi = @kodeTeknisi");
-      request.input("kodeTeknisi", sql.VarChar, updateData.kodeTeknisi);
-    }
-
-    // Line-specific fields update
+    // Add flow rate based on line
     if (isBCDLine) {
-      if (updateData.flowRateD !== undefined) {
-        updateFields.push("flow_rate_d = @flowRateD");
-        request.input("flowRateD", sql.Decimal(10, 2), updateData.flowRateD);
+      if (updateData.line === 'LINE D') {
+        reportRequest.input("flowRateD", sql.Float, updateData.flowRateD || null);
+        reportRequest.input("flowRateBC", sql.Float, null);
+      } else {
+        reportRequest.input("flowRateBC", sql.Float, updateData.flowRateBC || null);
+        reportRequest.input("flowRateD", sql.Float, null);
       }
-      if (updateData.flowRateBC !== undefined) {
-        updateFields.push("flow_rate_bc = @flowRateBC");
-        request.input("flowRateBC", sql.Decimal(10, 2), updateData.flowRateBC);
-      }
-      if (updateData.valvePositions) {
-        updateFields.push("valve_a_status = @valveAStatus");
-        updateFields.push("valve_b_status = @valveBStatus");
-        updateFields.push("valve_c_status = @valveCStatus");
-        request.input("valveAStatus", sql.Bit, updateData.valvePositions.A || false);
-        request.input("valveBStatus", sql.Bit, updateData.valvePositions.B || false);
-        request.input("valveCStatus", sql.Bit, updateData.valvePositions.C || false);
-      }
+      reportRequest.input("flowRate", sql.Float, null);
+      
+      reportRequest.input("valveA", sql.Bit, updateData.valvePositions?.A || false);
+      reportRequest.input("valveB", sql.Bit, updateData.valvePositions?.B || false);
+      reportRequest.input("valveC", sql.Bit, updateData.valvePositions?.C || false);
     } else {
-      if (updateData.flowRate !== undefined) {
-        updateFields.push("flow_rate = @flowRate");
-        request.input("flowRate", sql.Decimal(10, 2), updateData.flowRate);
-      }
+      reportRequest.input("flowRate", sql.Float, updateData.flowRate || null);
+      reportRequest.input("flowRateD", sql.Float, null);
+      reportRequest.input("flowRateBC", sql.Float, null);
+      reportRequest.input("valveA", sql.Bit, null);
+      reportRequest.input("valveB", sql.Bit, null);
+      reportRequest.input("valveC", sql.Bit, null);
     }
 
-    if (updateFields.length > 0) {
-      updateFields.push("updated_at = GETDATE()");
-      await request.query(`
-        UPDATE tb_cip_reports 
-        SET ${updateFields.join(', ')} 
-        WHERE id = @id
-      `);
-    }
+    await reportRequest.query(`
+      UPDATE tb_cip_reports SET
+        date = @date,
+        process_order = @processOrder,
+        plant = @plant,
+        line = @line,
+        cip_type = @cipType,
+        operator = @operator,
+        posisi = @posisi,
+        flow_rate = @flowRate,
+        flow_rate_d = @flowRateD,
+        flow_rate_bc = @flowRateBC,
+        valve_a_status = @valveA,
+        valve_b_status = @valveB,
+        valve_c_status = @valveC,
+        notes = @notes,
+        status = @status,
+        updated_at = GETDATE()
+      WHERE id = @id
+    `);
 
-    // Update steps if provided
-    if (updateData.steps) {
-      // Delete existing steps
-      const deleteStepsRequest = new sql.Request(transaction);
-      await deleteStepsRequest
-        .input("cipReportId", sql.Int, id)
-        .query("DELETE FROM tb_cip_step_records WHERE cip_report_id = @cipReportId");
+    // Delete existing step records and re-insert
+    await new sql.Request(transaction)
+      .input("cipReportId", sql.Int, id)
+      .query("DELETE FROM tb_cip_step_records WHERE cip_report_id = @cipReportId");
 
-      // Insert new steps
-      if (updateData.steps.length > 0) {
-        for (const step of updateData.steps) {
-          const stepRequest = new sql.Request(transaction);
-          await stepRequest
-            .input("cipReportId", sql.Int, id)
-            .input("stepNumber", sql.Int, step.stepNumber)
-            .input("stepName", sql.VarChar, step.stepName)
-            .input("temperatureSetpointMin", sql.Decimal(5, 2), step.temperatureSetpointMin)
-            .input("temperatureSetpointMax", sql.Decimal(5, 2), step.temperatureSetpointMax)
-            .input("temperatureActual", sql.Decimal(5, 2), step.temperatureActual)
-            .input("timeSetpoint", sql.Int, step.timeSetpoint)
-            .input("timeActual", sql.Int, step.timeActual)
-            .input("concentration", sql.Decimal(5, 2), step.concentration)
-            .input("concentrationActual", sql.Decimal(5, 2), step.concentrationActual)
-            .input("startTime", sql.VarChar, step.startTime || null)
-            .input("endTime", sql.VarChar, step.endTime || null)
-            .query(`
-              INSERT INTO tb_cip_step_records 
-                (cip_report_id, step_number, step_name, temperature_setpoint_min, temperature_setpoint_max,
-                 temperature_actual, time_setpoint, time_actual, concentration, concentration_actual,
-                 start_time, end_time)
-              VALUES 
-                (@cipReportId, @stepNumber, @stepName, @temperatureSetpointMin, @temperatureSetpointMax,
-                 @temperatureActual, @timeSetpoint, @timeActual, @concentration, @concentrationActual,
-                 @startTime, @endTime)
-            `);
-        }
-      }
-    }
-
-    // Update line-specific records
-    if (isBCDLine) {
-      // Update special records for BCD lines
-      if (updateData.specialRecords) {
-        // Delete existing special records
-        const deleteSpecialRequest = new sql.Request(transaction);
-        await deleteSpecialRequest
+    // Insert CIP steps
+    if (updateData.steps && updateData.steps.length > 0) {
+      for (const step of updateData.steps) {
+        const stepRequest = new sql.Request(transaction);
+        await stepRequest
           .input("cipReportId", sql.Int, id)
-          .query("DELETE FROM tb_cip_special_records WHERE cip_report_id = @cipReportId");
-
-        // Insert new special records
-        if (updateData.specialRecords.length > 0) {
-          for (const record of updateData.specialRecords) {
-            const specialRequest = new sql.Request(transaction);
-            await specialRequest
-              .input("cipReportId", sql.Int, id)
-              .input("stepType", sql.VarChar, record.stepType)
-              .input("tempMin", sql.Decimal(5, 2), record.tempMin || null)
-              .input("tempMax", sql.Decimal(5, 2), record.tempMax || null)
-              .input("tempActual", sql.Decimal(5, 2), record.tempActual || null)
-              .input("tempBC", sql.Decimal(5, 2), record.tempBC || null)
-              .input("tempDMin", sql.Decimal(5, 2), record.tempDMin || null)
-              .input("tempDMax", sql.Decimal(5, 2), record.tempDMax || null)
-              .input("concMin", sql.Decimal(5, 2), record.concMin || null)
-              .input("concMax", sql.Decimal(5, 2), record.concMax || null)
-              .input("concActual", sql.Decimal(5, 2), record.concActual || null)
-              .input("timeMinutes", sql.Int, record.time || null)
-              .input("startTime", sql.VarChar, record.startTime || null)
-              .input("endTime", sql.VarChar, record.endTime || null)
-              .input("kode", sql.VarChar, record.kode || '')
-              .query(`
-                INSERT INTO tb_cip_special_records 
-                  (cip_report_id, step_type, temp_min, temp_max, temp_actual,
-                   temp_bc, temp_d_min, temp_d_max, conc_min, conc_max, conc_actual,
-                   time_minutes, start_time, end_time, kode)
-                VALUES 
-                  (@cipReportId, @stepType, @tempMin, @tempMax, @tempActual,
-                   @tempBC, @tempDMin, @tempDMax, @concMin, @concMax, @concActual,
-                   @timeMinutes, @startTime, @endTime, @kode)
-              `);
-          }
-        }
+          .input("stepNumber", sql.Int, step.stepNumber)
+          .input("stepName", sql.VarChar, step.stepName)
+          .input("temperatureSetpointMin", sql.Float, step.temperatureSetpointMin || null)
+          .input("temperatureSetpointMax", sql.Float, step.temperatureSetpointMax || null)
+          .input("temperatureActual", sql.Float, step.temperatureActual || null)
+          .input("timeSetpoint", sql.Int, step.timeSetpoint || null)
+          .input("timeActual", sql.Int, step.timeActual || null)
+          .input("concentration", sql.Float, step.concentration || null)
+          .input("concentrationActual", sql.Float, step.concentrationActual || null)
+          .input("startTime", sql.VarChar, step.startTime || null)
+          .input("endTime", sql.VarChar, step.endTime || null)
+          .query(`
+            INSERT INTO tb_cip_step_records (
+              cip_report_id, step_number, step_name,
+              temperature_setpoint_min, temperature_setpoint_max, temperature_actual,
+              time_setpoint, time_actual, concentration, concentration_actual,
+              start_time, end_time
+            )
+            VALUES (
+              @cipReportId, @stepNumber, @stepName,
+              @temperatureSetpointMin, @temperatureSetpointMax, @temperatureActual,
+              @timeSetpoint, @timeActual, @concentration, @concentrationActual,
+              @startTime, @endTime
+            )
+          `);
       }
-    } else {
-      // Update COP records for LINE A
-      if (updateData.copRecords) {
-        // Delete existing COP records
-        const deleteCopRequest = new sql.Request(transaction);
-        await deleteCopRequest
-          .input("cipReportId", sql.Int, id)
-          .query("DELETE FROM tb_cip_cop_records WHERE cip_report_id = @cipReportId");
+    }
 
-        // Insert new COP records
-        if (updateData.copRecords.length > 0) {
-          for (const cop of updateData.copRecords) {
-            const copRequest = new sql.Request(transaction);
-            await copRequest
-              .input("cipReportId", sql.Int, id)
-              .input("stepType", sql.VarChar, cop.stepType)
-              .input("time67Min", sql.Int, cop.time67Min)
-              .input("time45Min", sql.Int, cop.time45Min)
-              .input("time60Min", sql.Int, cop.time60Min)
-              .input("startTime", sql.VarChar, cop.startTime || null)
-              .input("endTime", sql.VarChar, cop.endTime || null)
-              .input("tempMin", sql.Decimal(5, 2), cop.tempMin)
-              .input("tempMax", sql.Decimal(5, 2), cop.tempMax)
-              .input("tempActual", sql.Decimal(5, 2), cop.tempActual)
-              .input("kode", sql.VarChar, cop.kode)
-              .query(`
-                INSERT INTO tb_cip_cop_records 
-                  (cip_report_id, step_type, time_67_min, time_45_min, time_60_min,
-                   start_time, end_time, temp_min, temp_max, temp_actual, kode)
-                VALUES 
-                  (@cipReportId, @stepType, @time67Min, @time45Min, @time60Min,
-                   @startTime, @endTime, @tempMin, @tempMax, @tempActual, @kode)
-              `);
-          }
-        }
+    // Delete and re-insert line-specific records
+    await new sql.Request(transaction)
+      .input("cipReportId", sql.Int, id)
+      .query("DELETE FROM tb_cip_cop_records WHERE cip_report_id = @cipReportId");
+
+    await new sql.Request(transaction)
+      .input("cipReportId", sql.Int, id)
+      .query("DELETE FROM tb_cip_special_records WHERE cip_report_id = @cipReportId");
+
+    if (updateData.line === 'LINE A' && updateData.copRecords && updateData.copRecords.length > 0) {
+      for (const cop of updateData.copRecords) {
+        const copRequest = new sql.Request(transaction);
+        await copRequest
+          .input("cipReportId", sql.Int, id)
+          .input("stepType", sql.VarChar, cop.stepType)
+          .input("time", sql.Int, cop.time || null)
+          .input("startTime", sql.VarChar, cop.startTime || null)
+          .input("endTime", sql.VarChar, cop.endTime || null)
+          .input("tempMin", sql.Float, cop.tempMin || 105)
+          .input("tempMax", sql.Float, cop.tempMax || 128)
+          .input("tempActual", sql.Float, cop.tempActual || null)
+          .query(`
+            INSERT INTO tb_cip_cop_records (
+              cip_report_id, step_type, time_minutes,
+              start_time, end_time, temp_min, temp_max, temp_actual
+            )
+            VALUES (
+              @cipReportId, @stepType, @time,
+              @startTime, @endTime, @tempMin, @tempMax, @tempActual
+            )
+          `);
+      }
+    } else if (isBCDLine && updateData.specialRecords && updateData.specialRecords.length > 0) {
+      for (const record of updateData.specialRecords) {
+        const specialRequest = new sql.Request(transaction);
+        await specialRequest
+          .input("cipReportId", sql.Int, id)
+          .input("stepType", sql.VarChar, record.stepType)
+          .input("time", sql.Int, record.time || null)
+          .input("tempMin", sql.Float, record.tempMin || null)
+          .input("tempMax", sql.Float, record.tempMax || null)
+          .input("tempActual", sql.Float, record.tempActual || null)
+          .input("tempBC", sql.Float, record.tempBC || null)
+          .input("tempDMin", sql.Float, record.tempDMin || null)
+          .input("tempDMax", sql.Float, record.tempDMax || null)
+          .input("concMin", sql.Float, record.concMin || null)
+          .input("concMax", sql.Float, record.concMax || null)
+          .input("concActual", sql.Float, record.concActual || null)
+          .input("startTime", sql.VarChar, record.startTime || null)
+          .input("endTime", sql.VarChar, record.endTime || null)
+          .query(`
+            INSERT INTO tb_cip_special_records (
+              cip_report_id, step_type, time_minutes,
+              temp_min, temp_max, temp_actual,
+              temp_bc, temp_d_min, temp_d_max,
+              conc_min, conc_max, conc_actual,
+              start_time, end_time
+            )
+            VALUES (
+              @cipReportId, @stepType, @time,
+              @tempMin, @tempMax, @tempActual,
+              @tempBC, @tempDMin, @tempDMax,
+              @concMin, @concMax, @concActual,
+              @startTime, @endTime
+            )
+          `);
       }
     }
 
     await transaction.commit();
 
-    // Return the updated report
     return await getCIPReportById(id);
   } catch (error) {
     await transaction.rollback();
@@ -865,183 +603,10 @@ async function updateCIPReport(id, updateData) {
   }
 }
 
-// New method that includes compliance score calculation within transaction for updates
 async function updateCIPReportWithCompliance(id, updateData, calculateComplianceScore) {
-  const pool = await getPool();
-  const transaction = new sql.Transaction(pool);
-
-  try {
-    await transaction.begin();
-
-    // Check if report exists
-    const checkRequest = new sql.Request(transaction);
-    const checkResult = await checkRequest
-      .input("id", sql.Int, id)
-      .query("SELECT COUNT(*) as count FROM tb_cip_reports WHERE id = @id");
-
-    if (checkResult.recordset[0].count === 0) {
-      await transaction.rollback();
-      return { cipReport: null, complianceScore: null };
-    }
-
-    // Create a temporary object for compliance calculation
-    const tempCipData = { ...updateData, id, steps: [], copRecords: [], specialRecords: [] };
-
-    // Calculate compliance score before committing
-    let complianceScore = null;
-    try {
-      if (updateData.steps || updateData.copRecords || updateData.specialRecords) {
-        complianceScore = calculateComplianceScore(tempCipData);
-      } else {
-        const currentData = await getCIPReportByIdWithTransaction(id, transaction);
-        if (currentData) {
-          complianceScore = calculateComplianceScore(currentData);
-        }
-      }
-    } catch (complianceError) {
-      console.error("Error calculating compliance score:", complianceError);
-    }
-
-    await transaction.commit();
-
-    // Fetch the complete report after commit
-    const cipReport = await getCIPReportById(id);
-
-    return {
-      cipReport,
-      complianceScore
-    };
-  } catch (error) {
-    await transaction.rollback();
-    console.error("Error updating CIP report with compliance:", error);
-    throw error;
-  }
-}
-
-// Helper function to get CIP report by ID within a transaction
-async function getCIPReportByIdWithTransaction(id, transaction) {
-  try {
-    // Get main CIP report
-    const reportResult = await transaction
-      .request()
-      .input("id", sql.Int, id)
-      .query(`
-        SELECT 
-          cr.id,
-          cr.date,
-          cr.process_order,
-          cr.plant,
-          cr.line,
-          cr.cip_type,
-          cr.status,
-          cr.operator,
-          cr.posisi,
-          cr.flow_rate,
-          cr.flow_rate_d,
-          cr.flow_rate_bc,
-          cr.valve_a_status,
-          cr.valve_b_status,
-          cr.valve_c_status,
-          cr.notes,
-          cr.kode_operator,
-          cr.kode_teknisi,
-          cr.created_at as createdAt,
-          cr.updated_at as updatedAt
-        FROM tb_cip_reports cr
-        WHERE cr.id = @id
-      `);
-
-    if (reportResult.recordset.length === 0) {
-      return null;
-    }
-
-    const report = reportResult.recordset[0];
-
-    // Get CIP steps
-    const stepsResult = await transaction
-      .request()
-      .input("cipReportId", sql.Int, id)
-      .query(`
-        SELECT 
-          cs.id,
-          cs.step_number as stepNumber,
-          cs.step_name as stepName,
-          cs.temperature_setpoint_min as temperatureSetpointMin,
-          cs.temperature_setpoint_max as temperatureSetpointMax,
-          cs.temperature_actual as temperatureActual,
-          cs.time_setpoint as timeSetpoint,
-          cs.time_actual as timeActual,
-          cs.concentration as concentration,
-          cs.concentration_actual as concentrationActual,
-          cs.start_time as startTime,
-          cs.end_time as endTime
-        FROM tb_cip_step_records cs
-        WHERE cs.cip_report_id = @cipReportId
-        ORDER BY cs.step_number
-      `);
-
-    // Format the response
-    const formattedReport = {
-      ...report,
-      steps: stepsResult.recordset,
-    };
-
-    // Get line-specific records
-    if (report.line === 'LINE A') {
-      const copResult = await transaction
-        .request()
-        .input("cipReportId", sql.Int, id)
-        .query(`
-          SELECT 
-            cc.id,
-            cc.step_type as stepType,
-            cc.time_67_min as time67Min,
-            cc.time_45_min as time45Min,
-            cc.time_60_min as time60Min,
-            cc.start_time as startTime,
-            cc.end_time as endTime,
-            cc.temp_min as tempMin,
-            cc.temp_max as tempMax,
-            cc.temp_actual as tempActual,
-            cc.kode
-          FROM tb_cip_cop_records cc
-          WHERE cc.cip_report_id = @cipReportId
-        `);
-
-      formattedReport.copRecords = copResult.recordset;
-    } else if (['LINE B', 'LINE C', 'LINE D'].includes(report.line)) {
-      const specialResult = await transaction
-        .request()
-        .input("cipReportId", sql.Int, id)
-        .query(`
-          SELECT 
-            cs.id,
-            cs.step_type as stepType,
-            cs.temp_min as tempMin,
-            cs.temp_max as tempMax,
-            cs.temp_actual as tempActual,
-            cs.temp_bc as tempBC,
-            cs.temp_d_min as tempDMin,
-            cs.temp_d_max as tempDMax,
-            cs.conc_min as concMin,
-            cs.conc_max as concMax,
-            cs.conc_actual as concActual,
-            cs.time_minutes as time,
-            cs.start_time as startTime,
-            cs.end_time as endTime,
-            cs.kode
-          FROM tb_cip_special_records cs
-          WHERE cs.cip_report_id = @cipReportId
-        `);
-
-      formattedReport.specialRecords = specialResult.recordset;
-    }
-
-    return formattedReport;
-  } catch (error) {
-    console.error("Error fetching CIP report by ID within transaction:", error);
-    throw error;
-  }
+  const cipReport = await updateCIPReport(id, updateData);
+  const complianceScore = calculateComplianceScore(cipReport);
+  return { cipReport, complianceScore };
 }
 
 async function deleteCIPReport(id) {
@@ -1051,25 +616,21 @@ async function deleteCIPReport(id) {
   try {
     await transaction.begin();
 
-    // Delete related records first (steps, COP records, and special records)
-    const deleteStepsRequest = new sql.Request(transaction);
-    await deleteStepsRequest
+    // Delete related records first
+    await new sql.Request(transaction)
       .input("cipReportId", sql.Int, id)
       .query("DELETE FROM tb_cip_step_records WHERE cip_report_id = @cipReportId");
 
-    const deleteCopRequest = new sql.Request(transaction);
-    await deleteCopRequest
+    await new sql.Request(transaction)
       .input("cipReportId", sql.Int, id)
       .query("DELETE FROM tb_cip_cop_records WHERE cip_report_id = @cipReportId");
 
-    const deleteSpecialRequest = new sql.Request(transaction);
-    await deleteSpecialRequest
+    await new sql.Request(transaction)
       .input("cipReportId", sql.Int, id)
       .query("DELETE FROM tb_cip_special_records WHERE cip_report_id = @cipReportId");
 
     // Delete the main CIP report
-    const deleteReportRequest = new sql.Request(transaction);
-    const result = await deleteReportRequest
+    const result = await new sql.Request(transaction)
       .input("id", sql.Int, id)
       .query("DELETE FROM tb_cip_reports WHERE id = @id");
 
@@ -1083,60 +644,45 @@ async function deleteCIPReport(id) {
   }
 }
 
-async function getCIPTypes() {
+async function updateApprovalStatus(id, roleId, action, userName, dateNow) {
+  const pool = await getPool();
+
   try {
-    const cipTypes = [
-      { id: 1, name: "CIP 1", value: "CIP_1", description: "CIP Type 1 cleaning process" },
-      { id: 2, name: "CIP 2", value: "CIP_2", description: "CIP Type 2 cleaning process" },
-      { id: 3, name: "CIP 3", value: "CIP_3", description: "CIP Type 3 cleaning process" },
-    ];
+    const approvalValue = action === "approve" ? 1 : 2;
+    let query = "";
+    
+    if (roleId === 9) {
+      query = `
+        UPDATE tb_cip_reports
+        SET approval_spv = @approvalValue,
+            approval_spv_by = @userName,
+            approval_spv_at = @dateNow,
+            updated_at = GETDATE()
+        WHERE id = @id
+      `;
+    } else if (roleId === 11) {
+      query = `
+        UPDATE tb_cip_reports
+        SET approval_coor = @approvalValue,
+            approval_coor_by = @userName,
+            approval_coor_at = @dateNow,
+            updated_at = GETDATE()
+        WHERE id = @id
+      `;
+    } else {
+      throw new Error("Unauthorized role for approval");
+    }
 
-    return cipTypes;
+    const result = await pool.request()
+      .input("approvalValue", sql.Int, approvalValue)
+      .input("userName", sql.VarChar, userName)
+      .input("dateNow", sql.DateTime, dateNow)
+      .input("id", sql.Int, id)
+      .query(query);
+
+    return { id, roleId, action, userName, approvalValue, rowsAffected: result.rowsAffected[0] };
   } catch (error) {
-    console.error("Error fetching CIP types:", error);
-    throw error;
-  }
-}
-
-async function getCIPStatusList() {
-  try {
-    const statusList = [
-      { id: 1, name: "In Progress", color: "#FF9800" },
-      { id: 2, name: "Complete", color: "#4CAF50" },
-      { id: 3, name: "Failed", color: "#F44336" },
-      { id: 4, name: "Pending", color: "#757575" },
-      { id: 5, name: "Cancelled", color: "#F44336" }
-    ];
-
-    return statusList;
-  } catch (error) {
-    console.error("Error fetching CIP status list:", error);
-    throw error;
-  }
-}
-
-async function getCIPStepTemplates() {
-  try {
-    const templates = {
-      "CIP KITCHEN": [
-        { stepNumber: 1, stepName: "COLD RINSE", temperatureSetpointMin: 20, temperatureSetpointMax: 35, timeSetpoint: 8 },
-        { stepNumber: 2, stepName: "WARM RINSE", temperatureSetpointMin: 70, temperatureSetpointMax: 80, timeSetpoint: 8 },
-        { stepNumber: 3, stepName: "ALKALI", temperatureSetpointMin: 70, temperatureSetpointMax: 80, timeSetpoint: 24, concentration: 2.0 },
-        { stepNumber: 4, stepName: "COLD RINSE", temperatureSetpointMin: 20, temperatureSetpointMax: 35, timeSetpoint: 8 },
-        { stepNumber: 5, stepName: "ACID", temperatureSetpointMin: 60, temperatureSetpointMax: 70, timeSetpoint: 16, concentration: 1.0 },
-        { stepNumber: 6, stepName: "WARM RINSE", temperatureSetpointMin: 70, temperatureSetpointMax: 80, timeSetpoint: 16 },
-        { stepNumber: 7, stepName: "COLD RINSE", temperatureSetpointMin: 20, temperatureSetpointMax: 35, timeSetpoint: 8 }
-      ],
-      "BCD_SPECIAL": [
-        { stepType: "DRYING", tempMin: 118, tempMax: 125, time: 57 },
-        { stepType: "FOAMING", time: 41 },
-        { stepType: "DISINFECT/SANITASI", concMin: 0.3, concMax: 0.5, time: 30, tempBC: 40, tempDMin: 20, tempDMax: 35 }
-      ]
-    };
-
-    return templates;
-  } catch (error) {
-    console.error("Error fetching CIP step templates:", error);
+    console.error("Error updating approval status:", error);
     throw error;
   }
 }
@@ -1149,7 +695,5 @@ module.exports = {
   updateCIPReport,
   updateCIPReportWithCompliance,
   deleteCIPReport,
-  getCIPTypes,
-  getCIPStatusList,
-  getCIPStepTemplates
+  updateApprovalStatus
 };

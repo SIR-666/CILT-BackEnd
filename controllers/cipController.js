@@ -1,24 +1,13 @@
 const cipService = require("../services/cipService");
+const cipTemplateService = require("../services/cipTemplateService");
 const { validateCIPData, calculateComplianceScore } = require("../services/cipValidationService");
 
 exports.getAllCIPReports = async (req, res) => {
   try {
-    const date = req.query.date;
-    const plant = req.query.plant;
-    const line = req.query.line;
-    const processOrder = req.query.processOrder;
-    const status = req.query.status;
-    const cipType = req.query.cipType;
-    const posisi = req.query.posisi;
+    const { date, plant, line, processOrder, status, cipType, posisi } = req.query;
 
     const cipReports = await cipService.getAllCIPReports(
-      date,
-      plant,
-      line,
-      processOrder,
-      status,
-      cipType,
-      posisi
+      date, plant, line, processOrder, status, cipType, posisi
     );
 
     if (!cipReports) {
@@ -51,82 +40,40 @@ exports.getCIPReportById = async (req, res) => {
 exports.createCIPReport = async (req, res) => {
   try {
     const cipData = req.body;
-    const isDraft = req.body.isDraft || false; // Check if this is save as draft
+    const isDraft = req.body.isDraft !== false; // Default to draft if not specified
 
-    console.log("=== CREATE CIP REPORT START ===");
     console.log("Is Draft:", isDraft);
-    console.log("Received data:", JSON.stringify(cipData, null, 2));
 
-    // Validate required fields
-    if (!cipData.processOrder || !cipData.plant || !cipData.line || !cipData.cipType) {
-      console.error("Missing required fields");
+    // LESS STRICT VALIDATION - Only `line` is required
+    if (!cipData.line) {
+      console.error("Missing required field: line");
       return res.status(400).json({
-        message: "Missing required fields: processOrder, plant, line, cipType"
+        message: "Missing required field: line"
       });
     }
 
-    // Additional validation for posisi and operator
-    if (!cipData.operator) {
-      console.error("Operator is required");
-      return res.status(400).json({
-        message: "Operator is required"
-      });
+    // Auto-generate processOrder if not provided
+    if (!cipData.processOrder) {
+      cipData.processOrder = `CIP-${Date.now()}`;
+      console.log("Auto-generated processOrder:", cipData.processOrder);
     }
 
-    if (!cipData.posisi) {
-      console.error("Posisi is required");
-      return res.status(400).json({
-        message: "Posisi is required"
-      });
+    // Auto-fill operator from authenticated user if available
+    if (!cipData.operator && req.user) {
+      cipData.operator = req.user.username || req.user.name;
     }
 
-    // Check if this is a BCD line
-    const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(cipData.line);
+    // Auto-fill createdBy
+    cipData.createdBy = cipData.operator || (req.user ? req.user.username : null);
 
-    // Line-specific validation - Only for critical fields that prevent saving
-    if (isBCDLine) {
-      // Validate based on specific line
-      if (cipData.line === 'LINE D') {
-        // Only validate flowRateD for LINE D
-        if (!cipData.flowRateD) {
-          console.error("Flow Rate D is required for LINE D");
-          return res.status(400).json({
-            message: "Flow Rate D is required for LINE D"
-          });
-        }
-      } else if (cipData.line === 'LINE B' || cipData.line === 'LINE C') {
-        // Only validate flowRateBC for LINE B/C
-        if (!cipData.flowRateBC) {
-          console.error("Flow Rate B,C is required for LINE B/C");
-          return res.status(400).json({
-            message: "Flow Rate B,C is required for LINE B/C"
-          });
-        }
-      }
-
-      // Validate valve positions
-      if (!cipData.valvePositions) {
-        console.error("Valve positions are required for BCD lines");
-        return res.status(400).json({
-          message: "Valve positions are required for BCD lines"
-        });
-      }
-    } else {
-      // Validate LINE A specific fields
-      if (!cipData.flowRate) {
-        console.error("Flow rate is required for LINE A");
-        return res.status(400).json({
-          message: "Flow rate is required"
-        });
-      }
+    // Set default plant if not provided
+    if (!cipData.plant) {
+      cipData.plant = "Milk Filling Packing";
     }
 
     // Set status based on isDraft flag
-    let status = "In Progress"; // Default for draft
-    if (!isDraft) {
-      status = "Complete"; // Submitted/Finalized
-    }
-
+    let status = isDraft ? "In Progress" : "Complete";
+    
     // Override status if explicitly provided
     if (cipData.status) {
       status = cipData.status;
@@ -140,13 +87,13 @@ exports.createCIPReport = async (req, res) => {
       submittedAt: !isDraft ? new Date() : null
     };
 
-    // Validate data but don't block saving (warnings only)
+    // Validate data - collect warnings but DON'T block saving
     console.log("Validating CIP data for warnings...");
     const validationWarnings = validateCIPData(dataWithStatus);
     console.log("Validation warnings found:", validationWarnings.length);
 
-    // Create the report with compliance calculation - ALWAYS SAVE
-    console.log("Creating CIP report with compliance...");
+    // Create the report - ALWAYS SAVE regardless of warnings
+    console.log("Creating CIP report...");
     const result = await cipService.createCIPReportWithCompliance(dataWithStatus, calculateComplianceScore);
 
     if (!result || !result.cipReport) {
@@ -155,14 +102,10 @@ exports.createCIPReport = async (req, res) => {
     }
 
     console.log("CIP report created successfully with ID:", result.cipReport.id);
-    console.log("Status:", status);
-    console.log("Compliance score:", result.complianceScore);
-    console.log("=== CREATE CIP REPORT END ===");
 
-    // Return success with warnings (not errors)
     return res.status(201).json({
-      message: isDraft 
-        ? "CIP report saved as draft successfully" 
+      message: isDraft
+        ? "CIP report saved as draft successfully"
         : "CIP report submitted successfully",
       data: result.cipReport,
       compliance: result.complianceScore,
@@ -172,26 +115,11 @@ exports.createCIPReport = async (req, res) => {
       status
     });
   } catch (error) {
-    console.error("=== CREATE CIP REPORT ERROR ===");
-    console.error("Controller error details:", {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      code: error.code
-    });
-    console.error("=== END ERROR ===");
-
-    // Return more detailed error in development
-    const errorResponse = {
+    console.error("Controller error:", error);
+    return res.status(500).json({ 
       message: "Internal server error",
-      error: process.env.NODE_ENV === 'development' ? {
-        message: error.message,
-        code: error.code,
-        details: error.originalError ? error.originalError.message : undefined
-      } : undefined
-    };
-
-    return res.status(500).json(errorResponse);
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
@@ -199,17 +127,12 @@ exports.updateCIPReport = async (req, res) => {
   try {
     const id = req.params.id;
     const updateData = req.body;
-    const isDraft = req.body.isDraft || false;
+    const isDraft = req.body.isDraft !== false;
 
-    console.log("=== UPDATE CIP REPORT START ===");
     console.log("Report ID:", id);
     console.log("Is Draft:", isDraft);
-    console.log("Update data:", JSON.stringify(updateData, null, 2));
 
-    // Check if this is a BCD line update
-    const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(updateData.line);
-
-    // Get current report to check if it's already submitted
+    // Get current report
     const currentReport = await cipService.getCIPReportById(id);
     if (!currentReport) {
       return res.status(404).json({ message: "CIP report not found" });
@@ -217,59 +140,41 @@ exports.updateCIPReport = async (req, res) => {
 
     // Prevent editing if already submitted (unless explicitly allowed)
     if (currentReport.status === 'Complete' && !req.body.allowEditSubmitted) {
-      return res.status(400).json({ 
-        message: "Cannot edit submitted report. Contact admin if changes are needed." 
+      return res.status(400).json({
+        message: "Cannot edit submitted report. Contact admin if changes are needed."
       });
     }
 
     // Set status based on isDraft flag
-    let status = currentReport.status; // Keep current status by default
-    if (isDraft && currentReport.status === 'In Progress') {
-      status = "In Progress"; // Keep as draft
-    } else if (!isDraft) {
-      status = "Complete"; // Submit/Finalize
-      updateData.submittedAt = new Date();
+    let status = currentReport.status;
+    if (isDraft) {
+      status = "In Progress";
+    } else if (!isDraft && currentReport.status === 'In Progress') {
+      status = "Complete";
     }
 
-    // Override status if explicitly provided
-    if (updateData.status) {
-      status = updateData.status;
-    }
-
-    // Add status to updateData
     const dataWithStatus = {
       ...updateData,
       status,
-      isDraft
+      isDraft,
+      submittedAt: !isDraft ? new Date() : null
     };
 
-    // Validate data but don't block updating (warnings only)
-    if (updateData.steps || updateData.copRecords || updateData.specialRecords) {
-      console.log("Validating updated data for warnings...");
-      const validationWarnings = validateCIPData(dataWithStatus);
-      console.log("Validation warnings found:", validationWarnings.length);
-    }
+    // Validate data - collect warnings but DON'T block saving
+    const validationWarnings = validateCIPData(dataWithStatus);
 
-    // Update the report with compliance calculation - ALWAYS UPDATE
-    console.log("Updating CIP report with compliance...");
+    // Update the report - ALWAYS SAVE regardless of warnings
     const result = await cipService.updateCIPReportWithCompliance(id, dataWithStatus, calculateComplianceScore);
 
     if (!result || !result.cipReport) {
-      console.error("CIP report not found");
       return res.status(404).json({ message: "CIP report not found" });
     }
 
     console.log("CIP report updated successfully");
-    console.log("Status:", status);
-    console.log("Compliance score:", result.complianceScore);
-    console.log("=== UPDATE CIP REPORT END ===");
-
-    // Get validation warnings for response
-    const validationWarnings = validateCIPData(dataWithStatus);
 
     return res.status(200).json({
-      message: isDraft 
-        ? "CIP report saved as draft successfully" 
+      message: isDraft
+        ? "CIP report saved as draft successfully"
         : "CIP report submitted successfully",
       data: result.cipReport,
       compliance: result.complianceScore,
@@ -279,66 +184,42 @@ exports.updateCIPReport = async (req, res) => {
       status
     });
   } catch (error) {
-    console.error("=== UPDATE CIP REPORT ERROR ===");
-    console.error("Controller error details:", {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      code: error.code
-    });
-    console.error("=== END ERROR ===");
-
-    const errorResponse = {
-      message: "Internal server error",
-      error: process.env.NODE_ENV === 'development' ? {
-        message: error.message,
-        code: error.code,
-        details: error.originalError ? error.originalError.message : undefined
-      } : undefined
-    };
-
-    return res.status(500).json(errorResponse);
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
 
 exports.deleteCIPReport = async (req, res) => {
   try {
     const id = req.params.id;
-
     const deleted = await cipService.deleteCIPReport(id);
 
     if (!deleted) {
       return res.status(404).json({ message: "CIP report not found" });
     }
 
-    return res.status(200).json({
-      message: "CIP report deleted successfully"
-    });
+    return res.status(200).json({ message: "CIP report deleted successfully" });
   } catch (error) {
     console.error("Controller error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 
-// routes.js additions needed:
-// PUT /cip-report/:id/submit - Submit a draft report
 exports.submitCIPReport = async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Get current report
     const currentReport = await cipService.getCIPReportById(id);
     if (!currentReport) {
       return res.status(404).json({ message: "CIP report not found" });
     }
 
-    // Check if already submitted
     if (currentReport.status === 'Complete') {
       return res.status(400).json({ message: "Report is already submitted" });
     }
 
-    // Update status to Complete
     const updateData = {
+      ...currentReport,
       status: "Complete",
       isDraft: false,
       submittedAt: new Date()
@@ -350,7 +231,6 @@ exports.submitCIPReport = async (req, res) => {
       return res.status(404).json({ message: "CIP report not found" });
     }
 
-    // Get validation warnings for response
     const validationWarnings = validateCIPData(result.cipReport);
 
     return res.status(200).json({
@@ -366,6 +246,37 @@ exports.submitCIPReport = async (req, res) => {
   }
 };
 
+exports.approveCIPReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { roleId, userName } = req.body;
+    const now = new Date();
+
+    const result = await cipService.updateApprovalStatus(id, roleId, "approve", userName, now);
+
+    res.status(200).json({ message: "Report approved successfully", result });
+  } catch (error) {
+    console.error("Error approving report:", error);
+    res.status(500).json({ message: "Failed to approve report" });
+  }
+};
+
+exports.rejectCIPReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { roleId, userName } = req.body;
+    const now = new Date();
+
+    const result = await cipService.updateApprovalStatus(id, roleId, "reject", userName, now);
+
+    res.status(200).json({ message: "Report rejected successfully", result });
+  } catch (error) {
+    console.error("Error rejecting report:", error);
+    res.status(500).json({ message: "Failed to reject report" });
+  }
+};
+
+// STATIC DATA ENDPOINTS
 exports.getCIPTypes = async (req, res) => {
   try {
     const cipTypes = [
@@ -398,17 +309,100 @@ exports.getCIPStatusList = async (req, res) => {
   }
 };
 
+// TEMPLATE ENDPOINTS (using cipTemplateService)
+
+/**
+ * Get CIP Step Templates
+ * GET /cip-report/templates/steps?line=LINE A&posisi=Final
+ */
 exports.getCIPStepTemplates = async (req, res) => {
   try {
-    const templates = await cipService.getCIPStepTemplates();
-    return res.status(200).json(templates);
+    const { line, posisi } = req.query;
+    
+    if (line) {
+      // Get template for specific line
+      const template = await cipTemplateService.getTemplateByLine(line, posisi || "Final");
+      return res.status(200).json(template);
+    }
+    
+    // Return default steps if no line specified
+    const steps = await cipTemplateService.getCipSteps();
+    return res.status(200).json({ steps });
   } catch (error) {
     console.error("Controller error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 
-// New endpoint for compliance check
+/**
+ * Get Valve Configurations
+ * GET /cip-report/valve-configurations?posisi=Final
+ */
+exports.getValveConfigurations = async (req, res) => {
+  try {
+    const { posisi } = req.query;
+    
+    if (posisi) {
+      // Get specific posisi config
+      const config = await cipTemplateService.getValveConfig(posisi);
+      return res.status(200).json({ [posisi]: config });
+    }
+    
+    // Return both configurations
+    const [finalConfig, intermediateConfig] = await Promise.all([
+      cipTemplateService.getValveConfig("Final"),
+      cipTemplateService.getValveConfig("Intermediate")
+    ]);
+    
+    return res.status(200).json({
+      Final: finalConfig,
+      Intermediate: intermediateConfig
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+/**
+ * Get Flow Rate Requirements
+ * GET /cip-report/flow-requirements?line=LINE A
+ */
+exports.getFlowRateRequirements = async (req, res) => {
+  try {
+    const { line } = req.query;
+    
+    if (line) {
+      // Get specific line flow rate
+      const flowRate = await cipTemplateService.getFlowRate(line);
+      return res.status(200).json({ [line]: flowRate });
+    }
+    
+    // Return all flow rates
+    // LINE A = 12000, LINE B/C = 9000, LINE D = 6000
+    const requirements = {
+      "LINE A": {
+        flowRate: { min: 12000, unit: "L/H", description: "Flow A minimum" }
+      },
+      "LINE B": {
+        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
+      },
+      "LINE C": {
+        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
+      },
+      "LINE D": {
+        flowD: { min: 6000, unit: "L/H", description: "Flow D minimum" }
+      }
+    };
+
+    return res.status(200).json(requirements);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// COMPLIANCE CHECK
 exports.checkCIPCompliance = async (req, res) => {
   try {
     const id = req.params.id;
@@ -447,30 +441,28 @@ function generateRecommendations(warnings, compliance, line) {
   }
 
   warnings.forEach(warning => {
-    if (warning.message.includes("temperature")) {
-      recommendations.push(`Temperature recommendation: ${warning.message}`);
+    if (warning.message.includes("temperature") || warning.message.includes("Temperature")) {
+      recommendations.push(`Temperature: ${warning.message}`);
     }
-    if (warning.message.includes("concentration")) {
-      recommendations.push(`Chemical concentration recommendation: ${warning.message}`);
+    if (warning.message.includes("concentration") || warning.message.includes("Concentration")) {
+      recommendations.push(`Concentration: ${warning.message}`);
     }
     if (warning.message.includes("Flow")) {
-      recommendations.push(`Flow rate recommendation: ${warning.message}`);
+      recommendations.push(`Flow rate: ${warning.message}`);
     }
   });
 
   // Line-specific recommendations
+  if (line === 'LINE A' && warnings.some(w => w.field === 'flowRate')) {
+    recommendations.push("Check Flow A pump and valves - recommended minimum 12000 L/H");
+  }
+  
   if (isBCDLine) {
     if (line === 'LINE D' && warnings.some(w => w.field === 'flowRateD')) {
       recommendations.push("Check Flow D pump and valves - recommended minimum 6000 L/H");
     }
     if ((line === 'LINE B' || line === 'LINE C') && warnings.some(w => w.field === 'flowRateBC')) {
       recommendations.push("Check Flow B,C pumps and valves - recommended minimum 9000 L/H");
-    }
-    if (warnings.some(w => w.message.includes("DRYING"))) {
-      recommendations.push("DRYING process: Recommended temperature range 118-125°C");
-    }
-    if (warnings.some(w => w.message.includes("DISINFECT"))) {
-      recommendations.push("DISINFECT process: Recommended chemical concentration (0.3-0.5%) and temperature settings");
     }
   }
 
@@ -480,51 +472,3 @@ function generateRecommendations(warnings, compliance, line) {
 
   return recommendations;
 }
-
-// New endpoint to get valve position configurations
-exports.getValveConfigurations = async (req, res) => {
-  try {
-    const configurations = {
-      "Final": {
-        A: false,  // Close
-        B: true,   // Open
-        C: true    // Open
-      },
-      "Intermediate": {
-        A: false,  // Close
-        B: true,   // Open
-        C: false   // Close
-      }
-    };
-
-    return res.status(200).json(configurations);
-  } catch (error) {
-    console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-// New endpoint to get flow rate requirements
-exports.getFlowRateRequirements = async (req, res) => {
-  try {
-    const requirements = {
-      "LINE A": {
-        flowRate: { min: 0, description: "Standard flow rate" }
-      },
-      "LINE B": {
-        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
-      },
-      "LINE C": {
-        flowBC: { min: 9000, unit: "L/H", description: "Flow B,C minimum" }
-      },
-      "LINE D": {
-        flowD: { min: 6000, unit: "L/H", description: "Flow D minimum" }
-      }
-    };
-
-    return res.status(200).json(requirements);
-  } catch (error) {
-    console.error("Controller error:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
