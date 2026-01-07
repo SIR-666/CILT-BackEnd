@@ -17,7 +17,7 @@ const getPool = require("../config/pool");
 async function getAllCIPReports(date, plant, line, processOrder, status, cipType, posisi) {
   try {
     const pool = await getPool();
-    
+
     let query = `
       SELECT 
         id,
@@ -89,7 +89,7 @@ async function getAllCIPReports(date, plant, line, processOrder, status, cipType
 
     console.log("[getAllCIPReports] Executing query...");
     const result = await request.query(query);
-    
+
     // Parse JSON fields
     const reports = result.recordset.map(report => ({
       ...report,
@@ -101,7 +101,7 @@ async function getAllCIPReports(date, plant, line, processOrder, status, cipType
       specialRecordsData: undefined,
       valveData: undefined,
     }));
-    
+
     console.log("[getAllCIPReports] Found", reports.length, "reports");
     return reports;
   } catch (error) {
@@ -153,7 +153,7 @@ async function getCIPReportById(id) {
 
     const report = result.recordset[0];
     const isLineA = report.line === 'LINE A';
-    
+
     // Parse JSON and format response
     const formattedReport = {
       ...report,
@@ -166,7 +166,7 @@ async function getCIPReportById(id) {
 
     // Add line-specific data
     const specialData = safeJsonParse(report.specialRecordsData, []);
-    
+
     if (isLineA) {
       formattedReport.copRecords = specialData;
     } else {
@@ -188,7 +188,7 @@ async function getCIPReportById(id) {
 async function createCIPReport(cipData) {
   try {
     const pool = await getPool();
-    
+
     console.log("[createCIPReport] Creating report for line:", cipData.line);
 
     const isLineA = cipData.line === 'LINE A';
@@ -197,19 +197,19 @@ async function createCIPReport(cipData) {
     // Handle flow rate - could be object or number
     let flowRateValue = null;
     if (cipData.flowRate) {
-      flowRateValue = typeof cipData.flowRate === 'object' 
+      flowRateValue = typeof cipData.flowRate === 'object'
         ? parseFloat(cipData.flowRate.flowRateActual) || null
         : parseFloat(cipData.flowRate) || null;
     }
 
     // Prepare JSON data
     const stepsJson = JSON.stringify(cipData.steps || []);
-    
+
     // Special records: copRecords for LINE A, specialRecords for LINE B/C/D
     const specialRecordsJson = JSON.stringify(
       isLineA ? (cipData.copRecords || []) : (cipData.specialRecords || [])
     );
-    
+
     // Valve data only for LINE B/C/D
     const valveJson = isBCDLine ? JSON.stringify(cipData.valvePositions || { A: false, B: false, C: false }) : null;
 
@@ -229,14 +229,14 @@ async function createCIPReport(cipData) {
 
     // Flow rates based on line
     if (isLineA) {
-      request.input("flowRate", sql.Decimal(10,2), flowRateValue);
-      request.input("flowRateD", sql.Decimal(10,2), null);
-      request.input("flowRateBC", sql.Decimal(10,2), null);
+      request.input("flowRate", sql.Decimal(10, 2), flowRateValue);
+      request.input("flowRateD", sql.Decimal(10, 2), null);
+      request.input("flowRateBC", sql.Decimal(10, 2), null);
     } else {
-      request.input("flowRate", sql.Decimal(10,2), null);
-      request.input("flowRateD", sql.Decimal(10,2), 
+      request.input("flowRate", sql.Decimal(10, 2), null);
+      request.input("flowRateD", sql.Decimal(10, 2),
         cipData.flowRates?.flowD || (cipData.line === 'LINE D' ? flowRateValue : null));
-      request.input("flowRateBC", sql.Decimal(10,2), 
+      request.input("flowRateBC", sql.Decimal(10, 2),
         cipData.flowRates?.flowBC || (['LINE B', 'LINE C'].includes(cipData.line) ? flowRateValue : null));
     }
 
@@ -277,7 +277,7 @@ async function createCIPReportWithCompliance(cipData, calculateComplianceScore) 
 async function updateCIPReport(id, updateData) {
   try {
     const pool = await getPool();
-    
+
     console.log("[updateCIPReport] Updating report ID:", id);
 
     const isLineA = updateData.line === 'LINE A';
@@ -286,7 +286,7 @@ async function updateCIPReport(id, updateData) {
     // Handle flow rate
     let flowRateValue = null;
     if (updateData.flowRate) {
-      flowRateValue = typeof updateData.flowRate === 'object' 
+      flowRateValue = typeof updateData.flowRate === 'object'
         ? parseFloat(updateData.flowRate.flowRateActual) || null
         : parseFloat(updateData.flowRate) || null;
     }
@@ -314,14 +314,14 @@ async function updateCIPReport(id, updateData) {
     request.input("valveData", sql.NVarChar(sql.MAX), valveJson);
 
     if (isLineA) {
-      request.input("flowRate", sql.Decimal(10,2), flowRateValue);
-      request.input("flowRateD", sql.Decimal(10,2), null);
-      request.input("flowRateBC", sql.Decimal(10,2), null);
+      request.input("flowRate", sql.Decimal(10, 2), flowRateValue);
+      request.input("flowRateD", sql.Decimal(10, 2), null);
+      request.input("flowRateBC", sql.Decimal(10, 2), null);
     } else {
-      request.input("flowRate", sql.Decimal(10,2), null);
-      request.input("flowRateD", sql.Decimal(10,2), 
+      request.input("flowRate", sql.Decimal(10, 2), null);
+      request.input("flowRateD", sql.Decimal(10, 2),
         updateData.flowRates?.flowD || (updateData.line === 'LINE D' ? flowRateValue : null));
-      request.input("flowRateBC", sql.Decimal(10,2), 
+      request.input("flowRateBC", sql.Decimal(10, 2),
         updateData.flowRates?.flowBC || (['LINE B', 'LINE C'].includes(updateData.line) ? flowRateValue : null));
     }
 
@@ -363,7 +363,7 @@ async function updateCIPReportWithCompliance(id, updateData, calculateCompliance
 async function deleteCIPReport(id) {
   try {
     const pool = await getPool();
-    
+
     const result = await pool.request()
       .input("id", sql.Int, id)
       .query("DELETE FROM tb_cip_reports WHERE id = @id");
@@ -379,10 +379,10 @@ async function deleteCIPReport(id) {
 async function updateApprovalStatus(id, roleId, action, userName, dateNow) {
   try {
     const pool = await getPool();
-    
+
     const approvalValue = action === "approve" ? 1 : 2;
     let query = "";
-    
+
     if (roleId === 9) {
       query = `
         UPDATE tb_cip_reports 
@@ -425,6 +425,67 @@ function safeJsonParse(jsonString, defaultValue) {
   }
 }
 
+// DRAFT HANDLING FUNCTIONS   
+async function saveDraft({ process_order, line, posisi, plant, payload, locked_by }) {
+  const pool = await getPool();
+
+  await pool.request()
+    .input("process_order", sql.VarChar, process_order)
+    .input("line", sql.VarChar, line)
+    .input("posisi", sql.VarChar, posisi || null)
+    .input("plant", sql.VarChar, plant || null)
+    .input("payload", sql.NVarChar(sql.MAX), JSON.stringify(payload))
+    .input("locked_by", sql.VarChar, locked_by || "system")
+    .query(`
+      MERGE tb_CIP_drafts AS t
+      USING (SELECT @process_order AS process_order, @line AS line) s
+      ON t.process_order = s.process_order AND t.line = s.line
+      WHEN MATCHED THEN
+        UPDATE SET
+          payload = @payload,
+          posisi = @posisi,
+          plant = @plant,
+          locked_by = @locked_by,
+          locked_at = GETDATE(),
+          updated_at = GETDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (process_order, line, posisi, plant, payload, locked_by, locked_at)
+        VALUES (@process_order, @line, @posisi, @plant, @payload, @locked_by, GETDATE());
+    `);
+}
+
+async function getDraft(process_order, line) {
+  const pool = await getPool();
+
+  const result = await pool.request()
+    .input("process_order", sql.VarChar, process_order)
+    .input("line", sql.VarChar, line)
+    .query(`
+      SELECT * FROM tb_CIP_drafts
+      WHERE process_order = @process_order AND line = @line
+    `);
+
+  if (!result.recordset.length) return null;
+
+  const draft = result.recordset[0];
+  return {
+    ...draft,
+    payload: safeJsonParse(draft.payload, {})
+  };
+}
+
+async function clearDraft(process_order, line) {
+  const pool = await getPool();
+
+  await pool.request()
+    .input("process_order", sql.VarChar, process_order)
+    .input("line", sql.VarChar, line)
+    .query(`
+      DELETE FROM tb_CIP_drafts
+      WHERE process_order = @process_order AND line = @line
+    `);
+}
+
 module.exports = {
   getAllCIPReports,
   getCIPReportById,
@@ -433,5 +494,8 @@ module.exports = {
   updateCIPReport,
   updateCIPReportWithCompliance,
   deleteCIPReport,
+  saveDraft,
+  getDraft,
+  clearDraft,
   updateApprovalStatus
 };

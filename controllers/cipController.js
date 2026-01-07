@@ -93,18 +93,18 @@ exports.createCIPReport = async (req, res) => {
       data: result.cipReport,
       compliance: result.complianceScore,
       // Send validation info only if explicitly requested
-      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
-        ? validationInfo 
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0
+        ? validationInfo
         : undefined,
       isDraft,
       status: dataWithStatus.status
     });
   } catch (error) {
     console.error("[createCIPReport] Controller error:", error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       success: false,
       message: "Internal server error",
-      error: error.message 
+      error: error.message
     });
   }
 };
@@ -124,8 +124,8 @@ exports.updateCIPReport = async (req, res) => {
 
     // Allow editing submitted reports if explicitly allowed
     if (currentReport.status === 'Complete' && !req.body.allowEditSubmitted) {
-      return res.status(400).json({ 
-        message: "Cannot edit submitted report. Contact admin if changes are needed." 
+      return res.status(400).json({
+        message: "Cannot edit submitted report. Contact admin if changes are needed."
       });
     }
 
@@ -166,18 +166,18 @@ exports.updateCIPReport = async (req, res) => {
       data: result.cipReport,
       compliance: result.complianceScore,
       // Send validation info only if explicitly requested
-      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
-        ? validationInfo 
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0
+        ? validationInfo
         : undefined,
       isDraft,
       status
     });
   } catch (error) {
     console.error("[updateCIPReport] Controller error:", error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       success: false,
       message: "Internal server error",
-      error: error.message 
+      error: error.message
     });
   }
 };
@@ -228,14 +228,20 @@ exports.submitCIPReport = async (req, res) => {
 
     const result = await cipService.updateCIPReportWithCompliance(id, updateData, calculateComplianceScore);
 
+    await cipService.clearDraft(
+      currentReport.processOrder,
+      currentReport.line
+    );
+
     return res.status(200).json({
       success: true,
       message: "CIP report submitted successfully",
       data: result.cipReport,
       compliance: result.complianceScore,
+      status: "Complete",
       // Send validation info only if explicitly requested
-      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0 
-        ? validationInfo 
+      validationInfo: req.query.includeValidation === 'true' && validationInfo.length > 0
+        ? validationInfo
         : undefined
     });
   } catch (error) {
@@ -310,19 +316,19 @@ exports.getCIPStatusList = async (req, res) => {
 exports.getCIPStepTemplates = async (req, res) => {
   try {
     const { line, posisi } = req.query;
-    
+
     console.log("[getCIPStepTemplates] Fetching for line:", line, "posisi:", posisi);
-    
+
     if (line) {
       const template = await cipTemplateService.getTemplateByLine(line, posisi || "Final");
-      
+
       console.log("[getCIPStepTemplates] Template fetched:", {
         cipStepsCount: template.cipSteps?.length || 0,
         specialRecordsCount: template.specialRecords?.length || 0,
         flowRate: template.flowRate,
         valveConfigCount: template.valveConfig?.length || 0,
       });
-      
+
       return res.status(200).json({
         success: true,
         data: {
@@ -334,7 +340,7 @@ exports.getCIPStepTemplates = async (req, res) => {
         message: "Templates fetched successfully"
       });
     }
-    
+
     // Default: return just steps
     const steps = await cipTemplateService.getCipSteps();
     return res.status(200).json({
@@ -355,17 +361,17 @@ exports.getCIPStepTemplates = async (req, res) => {
 exports.getValveConfigurations = async (req, res) => {
   try {
     const { posisi } = req.query;
-    
+
     if (posisi) {
       const config = await cipTemplateService.getValveConfig(posisi);
       return res.status(200).json({ success: true, data: config, posisi });
     }
-    
+
     const [finalConfig, intermediateConfig] = await Promise.all([
       cipTemplateService.getValveConfig("Final"),
       cipTemplateService.getValveConfig("Intermediate")
     ]);
-    
+
     return res.status(200).json({
       success: true,
       data: { Final: finalConfig, Intermediate: intermediateConfig }
@@ -383,12 +389,12 @@ exports.getValveConfigurations = async (req, res) => {
 exports.getFlowRateRequirements = async (req, res) => {
   try {
     const { line } = req.query;
-    
+
     if (line) {
       const flowRate = await cipTemplateService.getFlowRate(line);
       return res.status(200).json({ success: true, data: flowRate, line });
     }
-    
+
     const [lineA, lineB, lineC, lineD] = await Promise.all([
       cipTemplateService.getFlowRate("LINE A"),
       cipTemplateService.getFlowRate("LINE B"),
@@ -429,4 +435,38 @@ exports.checkCIPCompliance = async (req, res) => {
     console.error("[checkCIPCompliance] Error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
+};
+
+// DRAFT HANDLING ENDPOINTS 
+exports.saveDraft = async (req, res) => {
+  const { processOrder, line, posisi, plant, payload } = req.body;
+  const locked_by = req.user?.username || "system";
+
+  await cipService.saveDraft({
+    process_order: processOrder,
+    line,
+    posisi,
+    plant,
+    payload,
+    locked_by
+  });
+
+  res.json({ success: true });
+};
+
+// Retrieve draft based on processOrder and line
+exports.getDraft = async (req, res) => {
+  const { processOrder, line } = req.query;
+  const draft = await cipService.getDraft(processOrder, line);
+  res.json({
+    success: true,
+    data: draft?.payload || null
+  });
+};
+
+// Clear draft based on processOrder and line
+exports.clearDraft = async (req, res) => {
+  const { processOrder, line } = req.query;
+  await cipService.clearDraft(processOrder, line);
+  res.json({ success: true });
 };

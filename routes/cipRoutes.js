@@ -30,6 +30,13 @@ router.get("/", cipController.getAllCIPReports);
 // POST /cip-report
 router.post("/", cipController.createCIPReport);
 
+// DRAFT HANDLING ENDPOINTS
+// Save draft CIP report
+// POST /cip-report/draft
+router.post("/draft", cipController.saveDraft);
+router.get("/draft", cipController.getDraft);
+router.delete("/draft", cipController.clearDraft);
+
 // SPECIFIC ID ENDPOINTS
 // Get CIP report by ID
 // GET /cip-report/:id
