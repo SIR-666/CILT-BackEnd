@@ -190,7 +190,7 @@ async function createCIPReport(cipData) {
     const pool = await getPool();
 
     console.log("[createCIPReport] Creating report for line:", cipData.line);
-    console.log("[createCIPReport] Received cipData:", JSON.stringify({
+    console.log("[createCIPReport] 📥 Received cipData:", JSON.stringify({
       line: cipData.line,
       flowRate: cipData.flowRate,
       flowRateD: cipData.flowRateD,
@@ -211,7 +211,7 @@ async function createCIPReport(cipData) {
       if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
 
-    console.log("[createCIPReport] Parsed flowRateValue:", flowRateValue);
+    console.log("[createCIPReport] 🔢 Parsed flowRateValue:", flowRateValue);
 
     // Prepare JSON data
     const stepsJson = JSON.stringify(cipData.steps || []);
@@ -266,7 +266,7 @@ async function createCIPReport(cipData) {
     request.input("flowRateD", sql.Decimal(10, 2), finalFlowRateD);
     request.input("flowRateBC", sql.Decimal(10, 2), finalFlowRateBC);
 
-    console.log("[createCIPReport] SQL Parameters:", {
+    console.log("[createCIPReport] 💾 SQL Parameters:", {
       flowRate: finalFlowRate,
       flowRateD: finalFlowRateD,
       flowRateBC: finalFlowRateBC
@@ -291,10 +291,10 @@ async function createCIPReport(cipData) {
     `);
 
     const cipReportId = result.recordset[0].id;
-    console.log("[createCIPReport] Created report ID:", cipReportId);
+    console.log("[createCIPReport] ✅ Created report ID:", cipReportId);
 
     const createdReport = await getCIPReportById(cipReportId);
-    console.log("[createCIPReport] Returning report with flowRate:", {
+    console.log("[createCIPReport] 📤 Returning report with flowRate:", {
       line: createdReport.line,
       flowRate: createdReport.flowRate,
       flowRateD: createdReport.flowRateD,
@@ -303,9 +303,15 @@ async function createCIPReport(cipData) {
 
     return createdReport;
   } catch (error) {
-    console.error("[createCIPReport] Error:", error.message);
+    console.error("[createCIPReport] ❌ Error:", error.message);
     throw error;
   }
+}
+
+async function createCIPReportWithCompliance(cipData, calculateComplianceScore) {
+  const cipReport = await createCIPReport(cipData);
+  const complianceScore = calculateComplianceScore ? calculateComplianceScore(cipReport) : { score: 0, totalChecks: 0, passedChecks: 0 };
+  return { cipReport, complianceScore };
 }
 
 async function updateCIPReport(id, updateData) {
@@ -313,7 +319,7 @@ async function updateCIPReport(id, updateData) {
     const pool = await getPool();
 
     console.log("[updateCIPReport] Updating report ID:", id);
-    console.log("[updateCIPReport] Received updateData:", JSON.stringify({
+    console.log("[updateCIPReport] 📥 Received updateData:", JSON.stringify({
       line: updateData.line,
       flowRate: updateData.flowRate,
       flowRateD: updateData.flowRateD,
@@ -334,7 +340,7 @@ async function updateCIPReport(id, updateData) {
       if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
 
-    console.log("[updateCIPReport] Parsed flowRateValue:", flowRateValue);
+    console.log("[updateCIPReport] 🔢 Parsed flowRateValue:", flowRateValue);
 
     // Prepare JSON data
     const stepsJson = JSON.stringify(updateData.steps || []);
@@ -383,7 +389,7 @@ async function updateCIPReport(id, updateData) {
     request.input("flowRateD", sql.Decimal(10, 2), finalFlowRateD);
     request.input("flowRateBC", sql.Decimal(10, 2), finalFlowRateBC);
 
-    console.log("[updateCIPReport] SQL Parameters:", {
+    console.log("[updateCIPReport] 💾 SQL Parameters:", {
       flowRate: finalFlowRate,
       flowRateD: finalFlowRateD,
       flowRateBC: finalFlowRateBC
@@ -410,10 +416,10 @@ async function updateCIPReport(id, updateData) {
       WHERE id = @id
     `);
 
-    console.log("[updateCIPReport] Updated successfully");
+    console.log("[updateCIPReport] ✅ Updated successfully");
 
     const updatedReport = await getCIPReportById(id);
-    console.log("[updateCIPReport] Returning report with flowRate:", {
+    console.log("[updateCIPReport] 📤 Returning report with flowRate:", {
       line: updatedReport.line,
       flowRate: updatedReport.flowRate,
       flowRateD: updatedReport.flowRateD,
@@ -422,7 +428,7 @@ async function updateCIPReport(id, updateData) {
 
     return updatedReport;
   } catch (error) {
-    console.error("[updateCIPReport] Error:", error.message);
+    console.error("[updateCIPReport] ❌ Error:", error.message);
     throw error;
   }
 }
