@@ -190,6 +190,13 @@ async function createCIPReport(cipData) {
     const pool = await getPool();
 
     console.log("[createCIPReport] Creating report for line:", cipData.line);
+    console.log("[createCIPReport] Received cipData:", JSON.stringify({
+      line: cipData.line,
+      flowRate: cipData.flowRate,
+      flowRateD: cipData.flowRateD,
+      flowRateBC: cipData.flowRateBC,
+      flowRates: cipData.flowRates
+    }, null, 2));
 
     const isLineA = cipData.line === 'LINE A';
     const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(cipData.line);
@@ -203,6 +210,8 @@ async function createCIPReport(cipData) {
 
       if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
+
+    console.log("[createCIPReport] Parsed flowRateValue:", flowRateValue);
 
     // Prepare JSON data
     const stepsJson = JSON.stringify(cipData.steps || []);
@@ -230,19 +239,38 @@ async function createCIPReport(cipData) {
     request.input("valveData", sql.NVarChar(sql.MAX), valveJson);
 
     // Flow rates based on line
+    let finalFlowRate = null;
+    let finalFlowRateD = null;
+    let finalFlowRateBC = null;
+
     if (isLineA) {
-      request.input("flowRate", sql.Decimal(10, 2), flowRateValue);
-      request.input("flowRateD", sql.Decimal(10, 2), null);
-      request.input("flowRateBC", sql.Decimal(10, 2), null);
+      finalFlowRate = flowRateValue;
+      console.log("[createCIPReport] LINE A - Setting flowRate:", finalFlowRate);
     } else {
-      request.input("flowRate", sql.Decimal(10, 2), null);
-      request.input("flowRateD", sql.Decimal(10, 2),
-        cipData.flowRates?.flowD ??
-        (cipData.line === 'LINE D' ? flowRateValue : null));
-      request.input("flowRateBC", sql.Decimal(10, 2),
-        cipData.flowRates?.flowBC ??
-        (['LINE B', 'LINE C'].includes(cipData.line) ? flowRateValue : null));
+      // LINE B/C/D
+      if (cipData.line === 'LINE D') {
+        finalFlowRateD = cipData.flowRateD !== undefined && cipData.flowRateD !== null
+          ? parseFloat(cipData.flowRateD)
+          : flowRateValue;
+        console.log("[createCIPReport] LINE D - Setting flowRateD:", finalFlowRateD);
+      } else {
+        // LINE B or C
+        finalFlowRateBC = cipData.flowRateBC !== undefined && cipData.flowRateBC !== null
+          ? parseFloat(cipData.flowRateBC)
+          : flowRateValue;
+        console.log("[createCIPReport] LINE B/C - Setting flowRateBC:", finalFlowRateBC);
+      }
     }
+
+    request.input("flowRate", sql.Decimal(10, 2), finalFlowRate);
+    request.input("flowRateD", sql.Decimal(10, 2), finalFlowRateD);
+    request.input("flowRateBC", sql.Decimal(10, 2), finalFlowRateBC);
+
+    console.log("[createCIPReport] SQL Parameters:", {
+      flowRate: finalFlowRate,
+      flowRateD: finalFlowRateD,
+      flowRateBC: finalFlowRateBC
+    });
 
     const result = await request.query(`
       INSERT INTO tb_cip_reports (
@@ -265,17 +293,19 @@ async function createCIPReport(cipData) {
     const cipReportId = result.recordset[0].id;
     console.log("[createCIPReport] Created report ID:", cipReportId);
 
-    return await getCIPReportById(cipReportId);
+    const createdReport = await getCIPReportById(cipReportId);
+    console.log("[createCIPReport] Returning report with flowRate:", {
+      line: createdReport.line,
+      flowRate: createdReport.flowRate,
+      flowRateD: createdReport.flowRateD,
+      flowRateBC: createdReport.flowRateBC
+    });
+
+    return createdReport;
   } catch (error) {
     console.error("[createCIPReport] Error:", error.message);
     throw error;
   }
-}
-
-async function createCIPReportWithCompliance(cipData, calculateComplianceScore) {
-  const cipReport = await createCIPReport(cipData);
-  const complianceScore = calculateComplianceScore ? calculateComplianceScore(cipReport) : { score: 0, totalChecks: 0, passedChecks: 0 };
-  return { cipReport, complianceScore };
 }
 
 async function updateCIPReport(id, updateData) {
@@ -283,6 +313,13 @@ async function updateCIPReport(id, updateData) {
     const pool = await getPool();
 
     console.log("[updateCIPReport] Updating report ID:", id);
+    console.log("[updateCIPReport] Received updateData:", JSON.stringify({
+      line: updateData.line,
+      flowRate: updateData.flowRate,
+      flowRateD: updateData.flowRateD,
+      flowRateBC: updateData.flowRateBC,
+      flowRates: updateData.flowRates
+    }, null, 2));
 
     const isLineA = updateData.line === 'LINE A';
     const isBCDLine = ['LINE B', 'LINE C', 'LINE D'].includes(updateData.line);
@@ -296,6 +333,8 @@ async function updateCIPReport(id, updateData) {
 
       if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
+
+    console.log("[updateCIPReport] Parsed flowRateValue:", flowRateValue);
 
     // Prepare JSON data
     const stepsJson = JSON.stringify(updateData.steps || []);
@@ -319,19 +358,36 @@ async function updateCIPReport(id, updateData) {
     request.input("specialRecordsData", sql.NVarChar(sql.MAX), specialRecordsJson);
     request.input("valveData", sql.NVarChar(sql.MAX), valveJson);
 
+    let finalFlowRate = null;
+    let finalFlowRateD = null;
+    let finalFlowRateBC = null;
+
     if (isLineA) {
-      request.input("flowRate", sql.Decimal(10, 2), flowRateValue);
-      request.input("flowRateD", sql.Decimal(10, 2), null);
-      request.input("flowRateBC", sql.Decimal(10, 2), null);
+      finalFlowRate = flowRateValue;
+      console.log("[updateCIPReport] LINE A - Setting flowRate:", finalFlowRate);
     } else {
-      request.input("flowRate", sql.Decimal(10, 2), null);
-      request.input("flowRateD", sql.Decimal(10, 2),
-        updateData.flowRates?.flowD ??
-        (updateData.line === 'LINE D' ? flowRateValue : null));
-      request.input("flowRateBC", sql.Decimal(10, 2),
-        updateData.flowRates?.flowBC ??
-        (['LINE B', 'LINE C'].includes(updateData.line) ? flowRateValue : null));
+      if (updateData.line === 'LINE D') {
+        finalFlowRateD = updateData.flowRateD !== undefined && updateData.flowRateD !== null
+          ? parseFloat(updateData.flowRateD)
+          : flowRateValue;
+        console.log("[updateCIPReport] LINE D - Setting flowRateD:", finalFlowRateD);
+      } else {
+        finalFlowRateBC = updateData.flowRateBC !== undefined && updateData.flowRateBC !== null
+          ? parseFloat(updateData.flowRateBC)
+          : flowRateValue;
+        console.log("[updateCIPReport] LINE B/C - Setting flowRateBC:", finalFlowRateBC);
+      }
     }
+
+    request.input("flowRate", sql.Decimal(10, 2), finalFlowRate);
+    request.input("flowRateD", sql.Decimal(10, 2), finalFlowRateD);
+    request.input("flowRateBC", sql.Decimal(10, 2), finalFlowRateBC);
+
+    console.log("[updateCIPReport] SQL Parameters:", {
+      flowRate: finalFlowRate,
+      flowRateD: finalFlowRateD,
+      flowRateBC: finalFlowRateBC
+    });
 
     await request.query(`
       UPDATE tb_cip_reports SET
@@ -355,7 +411,16 @@ async function updateCIPReport(id, updateData) {
     `);
 
     console.log("[updateCIPReport] Updated successfully");
-    return await getCIPReportById(id);
+
+    const updatedReport = await getCIPReportById(id);
+    console.log("[updateCIPReport] Returning report with flowRate:", {
+      line: updatedReport.line,
+      flowRate: updatedReport.flowRate,
+      flowRateD: updatedReport.flowRateD,
+      flowRateBC: updatedReport.flowRateBC
+    });
+
+    return updatedReport;
   } catch (error) {
     console.error("[updateCIPReport] Error:", error.message);
     throw error;
