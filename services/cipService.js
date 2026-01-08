@@ -196,10 +196,12 @@ async function createCIPReport(cipData) {
 
     // Handle flow rate - could be object or number
     let flowRateValue = null;
-    if (cipData.flowRate) {
+    if (cipData.flowRate !== undefined && cipData.flowRate !== null) {
       flowRateValue = typeof cipData.flowRate === 'object'
-        ? parseFloat(cipData.flowRate.flowRateActual) || null
-        : parseFloat(cipData.flowRate) || null;
+        ? parseFloat(cipData.flowRate.flowRateActual)
+        : parseFloat(cipData.flowRate);
+
+      if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
 
     // Prepare JSON data
@@ -235,9 +237,11 @@ async function createCIPReport(cipData) {
     } else {
       request.input("flowRate", sql.Decimal(10, 2), null);
       request.input("flowRateD", sql.Decimal(10, 2),
-        cipData.flowRates?.flowD || (cipData.line === 'LINE D' ? flowRateValue : null));
+        cipData.flowRates?.flowD ??
+        (cipData.line === 'LINE D' ? flowRateValue : null));
       request.input("flowRateBC", sql.Decimal(10, 2),
-        cipData.flowRates?.flowBC || (['LINE B', 'LINE C'].includes(cipData.line) ? flowRateValue : null));
+        cipData.flowRates?.flowBC ??
+        (['LINE B', 'LINE C'].includes(cipData.line) ? flowRateValue : null));
     }
 
     const result = await request.query(`
@@ -285,10 +289,12 @@ async function updateCIPReport(id, updateData) {
 
     // Handle flow rate
     let flowRateValue = null;
-    if (updateData.flowRate) {
+    if (updateData.flowRate !== undefined && updateData.flowRate !== null) {
       flowRateValue = typeof updateData.flowRate === 'object'
-        ? parseFloat(updateData.flowRate.flowRateActual) || null
-        : parseFloat(updateData.flowRate) || null;
+        ? parseFloat(updateData.flowRate.flowRateActual)
+        : parseFloat(updateData.flowRate);
+
+      if (Number.isNaN(flowRateValue)) flowRateValue = null;
     }
 
     // Prepare JSON data
@@ -320,9 +326,11 @@ async function updateCIPReport(id, updateData) {
     } else {
       request.input("flowRate", sql.Decimal(10, 2), null);
       request.input("flowRateD", sql.Decimal(10, 2),
-        updateData.flowRates?.flowD || (updateData.line === 'LINE D' ? flowRateValue : null));
+        updateData.flowRates?.flowD ??
+        (updateData.line === 'LINE D' ? flowRateValue : null));
       request.input("flowRateBC", sql.Decimal(10, 2),
-        updateData.flowRates?.flowBC || (['LINE B', 'LINE C'].includes(updateData.line) ? flowRateValue : null));
+        updateData.flowRates?.flowBC ??
+        (['LINE B', 'LINE C'].includes(updateData.line) ? flowRateValue : null));
     }
 
     await request.query(`
