@@ -23,6 +23,9 @@ app.listen(PORT, () => {
 const ciltRoutes = require("./routes/ciltRoutes");
 app.use("/cilt", ciltRoutes);
 
+const ciltDraftRoutes = require("./routes/ciltDraftRoutes");
+app.use("/draft", ciltDraftRoutes);
+
 const ciltMasterRoutes = require("./routes/ciltMasterRoutes");
 app.use("/mastercilt", ciltMasterRoutes);
 
