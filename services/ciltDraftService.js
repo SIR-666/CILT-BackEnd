@@ -4,6 +4,24 @@ const getPool = require("../config/pool");
 async function autoSaveDraft(data) {
     const pool = await getPool();
 
+    if (data.id) {
+        await pool.request()
+            .input("id", sql.Int, data.id)
+            .input("inspectionData", sql.NVarChar, JSON.stringify(data.inspectionData || []))
+            .input("descriptionData", sql.NVarChar, JSON.stringify(data.descriptionData || []))
+            .input("currentShift", sql.NVarChar, data.shift)
+            .query(`
+       UPDATE tb_CILT_DRAFT
+       SET inspectionData = @inspectionData,
+           descriptionData = @descriptionData,
+           currentShift = @currentShift,
+           updatedAt = GETDATE()
+       WHERE id = @id
+     `);
+
+        return { id: data.id, mode: "update-by-id" };
+    }
+
     // Check if draft already exists (by processOrder + packageType)
     const check = await pool.request()
         .input("processOrder", sql.NVarChar, data.processOrder)
