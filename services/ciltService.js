@@ -279,14 +279,14 @@ async function getReportCILTAll(packageType, plant, line, shift, machine, date) 
   }
 }
 
-async function getSKU(plant) {
+async function getSKU(sku) {
   try {
     const pool = await getPool();
     const products = await pool
       .request()
-      .input("plant", sql.VarChar, plant)
+      .input("sku", sql.VarChar, sku)
       .query(
-        `select id, plant, material, line from ProductDummy where plant = @plant`
+        `select id, sku, category from Product where sku = @sku`
       );
     return products.recordsets;
   } catch (error) {

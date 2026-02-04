@@ -72,6 +72,18 @@ exports.getSku = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+  
+exports.getSkuBySku = async (req, res) => {
+  try {
+    const sku = req.query.sku;
+    const skuData = await ciltService.getSKU(sku);
+    if (!skuData) return res.status(404).json({ message: "SKU not found" });
+    return res.status(200).json(skuData[0]);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
 
 exports.checkDraft = async (req, res) => {
   try {
