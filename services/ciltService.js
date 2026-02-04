@@ -279,16 +279,19 @@ async function getReportCILTAll(packageType, plant, line, shift, machine, date) 
   }
 }
 
-async function getSKU(sku) {
+async function getSKU(filter) {
   try {
     const pool = await getPool();
-    const products = await pool
-      .request()
-      .input("sku", sql.VarChar, sku)
-      .query(
-        `select id, sku, category from Product where sku = @sku`
-      );
-    return products.recordsets;
+    let query = `SELECT id, sku AS material, category FROM Product`;
+    const request = pool.request();
+
+    if (filter) {
+      query += ` WHERE sku = @filter`;
+      request.input("filter", sql.VarChar, filter);
+    }
+
+    const result = await request.query(query);
+    return result.recordset;
   } catch (error) {
     console.log(error);
     throw error;
