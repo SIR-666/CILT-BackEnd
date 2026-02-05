@@ -72,11 +72,17 @@ async function autoSaveDraft(data) {
     const check = await pool.request()
         .input("processOrder", sql.NVarChar, data.processOrder)
         .input("packageType", sql.NVarChar, data.packageType)
+        .input("line", sql.NVarChar, data.line)
+        .input("machine", sql.NVarChar, data.machine)
+        .input("currentShift", sql.NVarChar, data.shift)
         .query(`
             SELECT TOP 1 id, currentShift, sourceShift
             FROM tb_CILT_DRAFT
             WHERE processOrder = @processOrder
               AND packageType = @packageType
+              AND line = @line
+              AND machine = @machine
+              AND currentShift = @currentShift
         `);
 
     // UPDATE existing draft
@@ -219,8 +225,8 @@ async function submitDraft(id) {
 
         // Insert to main table
         // Use descriptionData if available, otherwise use empty string
-        const remarks = d.descriptionData && d.descriptionData !== '[]' 
-            ? d.descriptionData 
+        const remarks = d.descriptionData && d.descriptionData !== '[]'
+            ? d.descriptionData
             : '';
 
         await tx.request()
@@ -285,7 +291,7 @@ async function getDraftsForShiftChange(currentShift) {
 // Cleanup empty drafts (no meaningful inspection data)
 async function cleanupEmptyDrafts() {
     const pool = await getPool();
-    
+
     const result = await pool.request().query(`
         DELETE FROM tb_CILT_DRAFT
         WHERE inspectionData IS NULL 
