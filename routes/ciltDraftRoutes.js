@@ -2,19 +2,31 @@ const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/ciltDraftController");
 
-// list draft (ListCILTDraft.jsx)
+// GET /draft
 router.get("/", controller.list);
 
-// autosave (insert / update by processOrder)
+// Get drafts for shift change
+// GET /draft/shift-change/:currentShift
+router.get("/shift-change/:currentShift", controller.getShiftChangeDrafts);
+
+// Cleanup empty drafts (maintenance)
+// POST /draft/cleanup
+router.post("/cleanup", controller.cleanup);
+
+// Auto-save draft (insert/update by processOrder + packageType)
+// POST /draft/autosave
 router.post("/autosave", controller.autoSave);
 
-// submit draft → tb_CILT (specific route with /submit prefix)
+// Submit draft to tb_CILT
+// POST /draft/submit/:id
 router.post("/submit/:id", controller.submit);
 
-// delete draft
-router.delete("/:id", controller.remove);
-
-// detail draft
+// Get draft detail by ID
+// GET /draft/:id
 router.get("/:id", controller.detail);
+
+// Delete draft
+// DELETE /draft/:id
+router.delete("/:id", controller.remove);
 
 module.exports = router;
