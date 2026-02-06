@@ -12,6 +12,7 @@ router.get(
   "/getDowntimeMasterByLine",
   downtimeController.getDowntimeMasterByLine
 );
+router.get("/resolveRunId", downtimeController.resolveRunId);
 router.post("/downtime", downtimeController.createDowntime);
 router.put("/downtime", downtimeController.updateDowntime);
 router.get("/getDowntimeOrder", downtimeController.getDowntimeOrder);

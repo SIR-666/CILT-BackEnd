@@ -54,24 +54,101 @@ async function getDowntimeMasterByLine(line) {
   }
 }
 
+function getStartTime(order) {
+  return order.start_time || order.date;
+}
+
+function getDurationMin(order) {
+  const raw = order.duration_min ?? order.minutes;
+  const parsed = parseInt(raw, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+async function resolveRunId(pool, order, startTime) {
+  if (order.run_id) {
+    return order.run_id;
+  }
+
+  const result = await pool
+    .request()
+    .input("plant", sql.NVarChar, order.plant)
+    .input("line", sql.NVarChar, order.line)
+    .input("shift", sql.NVarChar, order.shift)
+    .input("start_time", sql.VarChar, startTime)
+    .query(`
+      SELECT TOP 1 run_id
+      FROM [dbo].[ProductionRun]
+      WHERE plant = @plant
+        AND line = @line
+        AND shift = @shift
+        AND CONVERT(DATETIME, @start_time, 120) >= start_time
+        AND (end_time IS NULL OR CONVERT(DATETIME, @start_time, 120) <= end_time)
+      ORDER BY start_time DESC
+    `);
+
+  if (result.recordset.length === 0) {
+    throw new Error("Production run not found for the given time and line.");
+  }
+
+  return result.recordset[0].run_id;
+}
+
+async function resolveDowntimeMasterId(pool, order) {
+  if (order.downtimemaster_id) {
+    return order.downtimemaster_id;
+  }
+
+  const result = await pool
+    .request()
+    .input("line", sql.NVarChar, order.line)
+    .input("category", sql.NVarChar, order.downtime_category)
+    .input("downtime", sql.NVarChar, order.jenis)
+    .query(`
+      SELECT TOP 1 id
+      FROM [dbo].[DowntimeMasterNew]
+      WHERE line = @line
+        AND downtime_category = @category
+        AND downtime = @downtime
+    `);
+
+  if (result.recordset.length === 0) {
+    throw new Error("Downtime master not found for the given selection.");
+  }
+
+  return result.recordset[0].id;
+}
+
+async function getRunIdByContext(plant, line, shift, startTime) {
+  const pool = await getPool();
+  const order = { plant, line, shift };
+  return resolveRunId(pool, order, startTime);
+}
+
 async function createDowntime(order) {
   try {
     const pool = await getPool();
+    const startTime = getStartTime(order);
+    const durationMin = getDurationMin(order);
+
+    if (!startTime || durationMin === null) {
+      throw new Error("Start time and duration are required.");
+    }
+
+    const runId = await resolveRunId(pool, order, startTime);
+    const downtimeMasterId = await resolveDowntimeMasterId(pool, order);
 
     const existingDowntime = await pool
       .request()
-      .input("plant", order.plant)
-      .input("shift", order.shift)
-      .input("line", order.line)
-      .input("newDate", order.date)
-      .input("minutes", order.minutes).query(`
-            SELECT * FROM [tb_CILT_downtime]
-            WHERE plant = @plant
-            AND shift = @shift
-            AND line = @line
-            AND [date] < DATEADD(MINUTE, CAST(@minutes AS INT), @newDate)
-            AND DATEADD(MINUTE, CAST([minutes] AS INT), [date]) > @newDate
-        `);
+      .input("run_id", sql.BigInt, runId)
+      .input("start_time", sql.VarChar, startTime)
+      .input("duration_min", sql.Int, durationMin)
+      .query(`
+        SELECT TOP 1 event_id
+        FROM [dbo].[DowntimeEvent]
+        WHERE run_id = @run_id
+          AND start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
+          AND end_time > CONVERT(DATETIME, @start_time, 120)
+      `);
 
     if (existingDowntime.recordset.length > 0) {
       throw new Error("Downtime conflicts with existing entries.");
@@ -79,64 +156,77 @@ async function createDowntime(order) {
 
     const result = await pool
       .request()
-      .input("plant", order.plant)
-      .input("date", order.date ? order.date : null) // Use DATETIME
-      .input("shift", order.shift)
-      .input("line", order.line)
-      .input("downtime_category", order.downtime_category)
-      .input("mesin", order.mesin)
-      .input("jenis", order.jenis)
-      .input("keterangan", order.keterangan)
-      .input("minutes", order.minutes).query(`INSERT INTO tb_CILT_downtime (
-                plant,
-                date,
-                shift,
-                line,
-                downtime_category,
-                mesin,
-                jenis,
-                keterangan,
-                minutes
-              ) OUTPUT inserted.id VALUES (
-                @plant,
-                @date,
-                @shift,
-                @line,
-                @downtime_category,
-                @mesin,
-                @jenis,
-                @keterangan,
-                @minutes
-              );`);
+      .input("run_id", sql.BigInt, runId)
+      .input("downtimemaster_id", sql.Int, downtimeMasterId)
+      .input("start_time", sql.VarChar, startTime)
+      .input("duration_min", sql.Int, durationMin)
+      .input("machine", sql.NVarChar, order.mesin ?? order.machine ?? null)
+      .input("note", sql.NVarChar, order.keterangan ?? order.note ?? null)
+      .query(`
+        INSERT INTO [dbo].[DowntimeEvent] (
+          run_id,
+          downtimemaster_id,
+          start_time,
+          end_time,
+          duration_min,
+          machine,
+          note
+        ) OUTPUT inserted.event_id VALUES (
+          @run_id,
+          @downtimemaster_id,
+          CONVERT(DATETIME, @start_time, 120),
+          DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120)),
+          @duration_min,
+          @machine,
+          @note
+        );
+      `);
 
-    const newOrder = { ...order, id: result.recordset[0].id };
+    const newOrder = {
+      ...order,
+      id: result.recordset[0].event_id,
+      run_id: runId,
+      downtimemaster_id: downtimeMasterId,
+    };
     console.log("New record created with id: ", newOrder.id);
     return newOrder;
   } catch (err) {
-    console.error("Error creating CILT downtime record:", err);
+    console.error("Error creating downtime event:", err);
   }
 }
 
 async function updateDowntime(order) {
   try {
     const pool = await getPool();
+    const startTime = getStartTime(order);
+    const durationMin = getDurationMin(order);
+    const eventId = order.id ?? order.event_id;
+
+    if (!eventId) {
+      throw new Error("Event id is required.");
+    }
+
+    if (!startTime || durationMin === null) {
+      throw new Error("Start time and duration are required.");
+    }
+
+    const runId = await resolveRunId(pool, order, startTime);
+    const downtimeMasterId = await resolveDowntimeMasterId(pool, order);
 
     // Cek konflik waktu (selain id yang sedang diupdate)
     const existingDowntime = await pool
       .request()
-      .input("plant", order.plant)
-      .input("shift", order.shift)
-      .input("line", order.line)
-      .input("newDate", order.date)
-      .input("minutes", order.minutes)
-      .input("id", order.id).query(`
-        SELECT * FROM [tb_CILT_downtime]
-        WHERE plant = @plant
-          AND shift = @shift
-          AND line = @line
-          AND id != @id
-          AND [date] < DATEADD(MINUTE, CAST(@minutes AS INT), @newDate)
-          AND DATEADD(MINUTE, CAST([minutes] AS INT), [date]) > @newDate
+      .input("run_id", sql.BigInt, runId)
+      .input("event_id", sql.BigInt, eventId)
+      .input("start_time", sql.VarChar, startTime)
+      .input("duration_min", sql.Int, durationMin)
+      .query(`
+        SELECT TOP 1 event_id
+        FROM [dbo].[DowntimeEvent]
+        WHERE run_id = @run_id
+          AND event_id != @event_id
+          AND start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
+          AND end_time > CONVERT(DATETIME, @start_time, 120)
       `);
 
     if (existingDowntime.recordset.length > 0) {
@@ -144,34 +234,39 @@ async function updateDowntime(order) {
     }
 
     // Lakukan update
-    await pool
+    const result = await pool
       .request()
-      .input("id", order.id)
-      .input("plant", order.plant)
-      .input("date", order.date)
-      .input("shift", order.shift)
-      .input("line", order.line)
-      .input("downtime_category", order.downtime_category)
-      .input("mesin", order.mesin)
-      .input("jenis", order.jenis)
-      .input("keterangan", order.keterangan)
-      .input("minutes", order.minutes).query(`
-        UPDATE tb_CILT_downtime
+      .input("event_id", sql.BigInt, eventId)
+      .input("run_id", sql.BigInt, runId)
+      .input("downtimemaster_id", sql.Int, downtimeMasterId)
+      .input("start_time", sql.VarChar, startTime)
+      .input("duration_min", sql.Int, durationMin)
+      .input("machine", sql.NVarChar, order.mesin ?? order.machine ?? null)
+      .input("note", sql.NVarChar, order.keterangan ?? order.note ?? null)
+      .query(`
+        UPDATE [dbo].[DowntimeEvent]
         SET
-          plant = @plant,
-          date = @date,
-          shift = @shift,
-          line = @line,
-          downtime_category = @downtime_category,
-          mesin = @mesin,
-          jenis = @jenis,
-          keterangan = @keterangan,
-          minutes = @minutes
-        WHERE id = @id
+          run_id = @run_id,
+          downtimemaster_id = @downtimemaster_id,
+          start_time = CONVERT(DATETIME, @start_time, 120),
+          end_time = DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120)),
+          duration_min = @duration_min,
+          machine = @machine,
+          note = @note
+        WHERE event_id = @event_id
       `);
 
-    console.log("Record updated with id: ", order.id);
-    return order;
+    if (result.rowsAffected[0] === 0) {
+      return null;
+    }
+
+    console.log("Record updated with id: ", eventId);
+    return {
+      ...order,
+      id: eventId,
+      run_id: runId,
+      downtimemaster_id: downtimeMasterId,
+    };
   } catch (err) {
     console.error("Error updating CILT downtime record:", err);
     throw err;
@@ -183,40 +278,62 @@ async function getDowntimeOrder() {
     const pool = await getPool();
     const result = await pool
       .request()
-      .query(`SELECT * FROM tb_CILT_downtime ORDER BY [DATE] DESC`);
+      .query(`
+        SELECT
+          e.event_id,
+          e.start_time,
+          e.end_time,
+          e.duration_min,
+          e.machine,
+          e.note,
+          pr.plant,
+          pr.line,
+          pr.shift,
+          dm.downtime_category,
+          dm.downtime
+        FROM [dbo].[DowntimeEvent] e
+        JOIN [dbo].[ProductionRun] pr ON pr.run_id = e.run_id
+        LEFT JOIN [dbo].[DowntimeMasterNew] dm ON dm.id = e.downtimemaster_id
+        ORDER BY e.start_time DESC
+      `);
 
     const records = result.recordset;
 
     const grouped = {};
 
     records.forEach((item) => {
-      const dateOnly = item.Date.toISOString().split("T")[0]; // hanya ambil YYYY-MM-DD
-      const key = `${item.Plant}_${dateOnly}_${item.Shift}_${item.Line}`;
+      const dateOnly = item.start_time.toISOString().split("T")[0]; // hanya ambil YYYY-MM-DD
+      const key = `${item.plant}_${dateOnly}_${item.shift}_${item.line}`;
 
       if (!grouped[key]) {
         grouped[key] = {
-          plant: item.Plant,
+          plant: item.plant,
           date: dateOnly,
-          shift: item.Shift,
-          line: item.Line,
+          shift: item.shift,
+          line: item.line,
           data: [],
         };
       }
 
+      const endTime =
+        item.end_time ??
+        new Date(
+          new Date(item.start_time).getTime() +
+            parseInt(item.duration_min) * 60000
+        );
+
       grouped[key].data.push({
-        id: item.id,
-        plant: item.Plant,
-        line: item.Line,
-        start_time: item.Date,
-        end_time: new Date(
-          new Date(item.Date).getTime() + parseInt(item.Minutes) * 60000
-        ),
-        downtime_category: item.Downtime_Category,
-        mesin: item.Mesin,
-        jenis: item.Jenis,
-        keterangan: item.Keterangan,
-        minutes: item.Minutes,
-        completed: item.Completed,
+        id: item.event_id,
+        plant: item.plant,
+        line: item.line,
+        start_time: item.start_time,
+        end_time: endTime,
+        downtime_category: item.downtime_category,
+        mesin: item.machine,
+        jenis: item.downtime,
+        keterangan: item.note,
+        minutes: item.duration_min,
+        completed: 0,
       });
     });
 
@@ -243,18 +360,32 @@ async function getDowntimeData(plant, line, date, shift) {
     console.log(plant, line, date, shift);
     const downtime = await pool
       .request()
-      .input("plant", sql.VarChar, plant)
-      .input("line", sql.VarChar, line)
+      .input("plant", sql.NVarChar, plant)
+      .input("line", sql.NVarChar, line)
       .input("date", sql.VarChar, date) // format: 'YYYY-MM-DD'
-      .input("shift", sql.VarChar, shift)
-      .query(
-        `SELECT * FROM [tb_CILT_downtime]
-          WHERE plant = @plant
-          AND line = @line
-          AND CAST([date] AS DATE) = CAST(@date AS DATE)
-          AND shift = @shift
-          order by [date] asc`
-      );
+      .input("shift", sql.NVarChar, shift)
+      .query(`
+        SELECT
+          e.event_id AS id,
+          pr.plant AS Plant,
+          pr.line AS Line,
+          e.start_time AS Date,
+          pr.shift AS Shift,
+          dm.downtime_category AS Downtime_Category,
+          e.machine AS Mesin,
+          dm.downtime AS Jenis,
+          e.note AS Keterangan,
+          e.duration_min AS Minutes,
+          CAST(0 AS INT) AS Completed
+        FROM [dbo].[DowntimeEvent] e
+        JOIN [dbo].[ProductionRun] pr ON pr.run_id = e.run_id
+        LEFT JOIN [dbo].[DowntimeMasterNew] dm ON dm.id = e.downtimemaster_id
+        WHERE pr.plant = @plant
+          AND pr.line = @line
+          AND pr.shift = @shift
+          AND CAST(e.start_time AS DATE) = CAST(@date AS DATE)
+        ORDER BY e.start_time ASC
+      `);
 
     return downtime.recordsets;
   } catch (error) {
@@ -268,8 +399,8 @@ async function deleteDowntime(id) {
     const pool = await getPool();
 
     const result = await pool.request().input("id", id).query(`
-        DELETE FROM tb_CILT_downtime
-        WHERE id = @id
+        DELETE FROM [dbo].[DowntimeEvent]
+        WHERE event_id = @id
       `);
 
     if (result.rowsAffected[0] === 0) {
@@ -288,6 +419,7 @@ module.exports = {
   getDowntimeList,
   getDowntimeMaster,
   getDowntimeMasterByLine,
+  getRunIdByContext,
   createDowntime,
   updateDowntime,
   getDowntimeOrder,

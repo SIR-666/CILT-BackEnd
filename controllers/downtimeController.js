@@ -53,6 +53,30 @@ exports.getDowntimeMasterByLine = async (req, res) => {
   }
 };
 
+exports.resolveRunId = async (req, res) => {
+  try {
+    const { plant, line, shift, start_time: startTime } = req.query;
+
+    if (!plant || !line || !shift || !startTime) {
+      return res
+        .status(400)
+        .json({ message: "plant, line, shift, and start_time are required" });
+    }
+
+    const runId = await downtimeService.getRunIdByContext(
+      plant,
+      line,
+      shift,
+      startTime
+    );
+
+    return res.status(200).json({ run_id: runId });
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Failed to resolve run id" });
+  }
+};
+
 exports.createDowntime = async (req, res) => {
   try {
     const data = req.body;
