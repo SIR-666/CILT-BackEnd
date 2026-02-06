@@ -5,7 +5,7 @@ const { route } = require("./ciltRoutes");
 
 router.get("/getDowntimeList", downtimeController.getDowntimeList);
 router.get(
-  "/getDowntimeMaster/:line/:category/:mesin",
+  "/getDowntimeMaster/:line/:category",
   downtimeController.getDowntimeMaster
 );
 router.get(

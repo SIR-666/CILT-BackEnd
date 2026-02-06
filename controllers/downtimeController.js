@@ -19,12 +19,10 @@ exports.getDowntimeMaster = async (req, res) => {
   try {
     const line = req.params.line;
     const category = req.params.category;
-    const mesin = req.params.mesin;
 
     const downtimeMaster = await downtimeService.getDowntimeMaster(
       line,
-      category,
-      mesin
+      category
     );
 
     if (!downtimeMaster) {

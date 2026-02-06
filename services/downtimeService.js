@@ -7,7 +7,7 @@ async function getDowntimeList() {
     const pool = await getPool();
     const downtimeList = await pool
       .request()
-      .query(`SELECT * FROM [tb_CILT_downtime_master]`);
+      .query(`SELECT * FROM [dbo].[DowntimeMasterNew]`);
 
     return downtimeList.recordsets;
   } catch (error) {
@@ -16,19 +16,17 @@ async function getDowntimeList() {
   }
 }
 
-async function getDowntimeMaster(line, category, mesin) {
+async function getDowntimeMaster(line, category) {
   try {
     const pool = await getPool();
     const downtime = await pool
       .request()
       .input("line", sql.VarChar, line)
       .input("category", sql.VarChar, `%${category}%`)
-      .input("mesin", sql.VarChar, mesin)
       .query(
-        `SELECT * FROM [DowntimeMaster]
+        `SELECT * FROM [dbo].[DowntimeMasterNew]
          WHERE line = @line
-         AND downtime_category LIKE @category
-         AND mesin = @mesin`
+         AND downtime_category LIKE @category`
       );
 
     return downtime.recordsets;
@@ -45,7 +43,7 @@ async function getDowntimeMasterByLine(line) {
       .request()
       .input("line", sql.VarChar, line)
       .query(
-        `SELECT * FROM [DowntimeMaster]
+        `SELECT * FROM [dbo].[DowntimeMasterNew]
          WHERE line = @line`
       );
 
