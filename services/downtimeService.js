@@ -1,4 +1,5 @@
 const sql = require("mssql");
+const moment = require("moment");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
@@ -126,8 +127,54 @@ async function getChangeOverTargets(line) {
   }
 }
 
+function normalizeStartTime(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const hasTimezoneInfo =
+    /Z$/i.test(raw) || /[+\-]\d{2}:\d{2}$/.test(raw);
+
+  if (hasTimezoneInfo) {
+    const zonedTime = moment.parseZone(raw, moment.ISO_8601, true);
+    if (zonedTime.isValid()) {
+      return zonedTime.utc().format("YYYY-MM-DD HH:mm");
+    }
+  }
+
+  const plainTime = moment(
+    raw,
+    [
+      "YYYY-MM-DD HH:mm:ss.SSS",
+      "YYYY-MM-DD HH:mm:ss",
+      "YYYY-MM-DD HH:mm",
+      "YYYY-MM-DDTHH:mm:ss.SSS",
+      "YYYY-MM-DDTHH:mm:ss",
+      "YYYY-MM-DDTHH:mm",
+    ],
+    true
+  );
+
+  if (plainTime.isValid()) {
+    // Input without timezone is treated as WIB (+07), then normalized to UTC.
+    return plainTime.utcOffset(7, true).utc().format("YYYY-MM-DD HH:mm");
+  }
+
+  const fallback = moment(raw);
+  if (fallback.isValid()) {
+    return fallback.utc().format("YYYY-MM-DD HH:mm");
+  }
+
+  throw new Error("Invalid start time format.");
+}
+
 function getStartTime(order) {
-  return order.startTime || order.start_time || order.date;
+  return normalizeStartTime(order.startTime || order.start_time || order.date);
 }
 
 function getDurationMin(order) {
@@ -286,7 +333,7 @@ async function resolveDowntimeMasterId(pool, order) {
 async function getRunIdByContext(plant, line, shift, startTime) {
   const pool = await getPool();
   const order = { plant, line, shift };
-  return resolveRunId(pool, order, startTime);
+  return resolveRunId(pool, order, normalizeStartTime(startTime));
 }
 
 async function createDowntime(order) {
