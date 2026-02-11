@@ -208,3 +208,47 @@ exports.deleteDowntime = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+exports.reassignDowntimeRun = async (req, res) => {
+  try {
+    const { from_run_id: fromRunId, to_run_id: toRunId } = req.body;
+
+    if (!fromRunId || !toRunId) {
+      return res
+        .status(400)
+        .json({ message: "from_run_id and to_run_id are required" });
+    }
+
+    const result = await downtimeService.reassignDowntimeRun(fromRunId, toRunId);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    if (error.message?.includes("required") || error.message?.includes("numeric")) {
+      return res.status(400).json({ message: error.message });
+    }
+    return res.status(500).json({ message: "Failed to reassign downtime runs" });
+  }
+};
+
+exports.reassignDowntimeEvents = async (req, res) => {
+  try {
+    const { event_ids: eventIds, to_run_id: toRunId } = req.body;
+
+    if (!Array.isArray(eventIds) || eventIds.length === 0 || !toRunId) {
+      return res
+        .status(400)
+        .json({ message: "event_ids and to_run_id are required" });
+    }
+
+    const result = await downtimeService.reassignDowntimeEvents(eventIds, toRunId);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    if (error.message?.includes("required") || error.message?.includes("numeric")) {
+      return res.status(400).json({ message: error.message });
+    }
+    return res
+      .status(500)
+      .json({ message: "Failed to reassign downtime events" });
+  }
+};

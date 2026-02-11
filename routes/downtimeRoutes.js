@@ -19,5 +19,10 @@ router.put("/downtime", downtimeController.updateDowntime);
 router.get("/getDowntimeOrder", downtimeController.getDowntimeOrder);
 router.get("/getDowntimeData", downtimeController.getDowntimeData);
 router.delete("/downtime/:id", downtimeController.deleteDowntime);
+router.post("/reassignDowntimeRun", downtimeController.reassignDowntimeRun);
+router.post(
+  "/reassignDowntimeEvents",
+  downtimeController.reassignDowntimeEvents
+);
 
 module.exports = router;

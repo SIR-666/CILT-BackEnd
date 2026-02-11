@@ -185,13 +185,21 @@ function getDurationMin(order) {
 }
 
 async function resolveRunId(pool, order, startTime) {
-  if (order.run_id) {
-    return order.run_id;
-  }
-
   const line = normalizeLine(order.line);
   if (!line) {
     throw new Error("Line is required.");
+  }
+
+  let resolvedRunId = null;
+  if (
+    order.run_id !== undefined &&
+    order.run_id !== null &&
+    String(order.run_id).trim() !== ""
+  ) {
+    const parsedRunId = Number(order.run_id);
+    if (Number.isFinite(parsedRunId)) {
+      resolvedRunId = parsedRunId;
+    }
   }
 
   const byLineResult = await pool
@@ -208,35 +216,40 @@ async function resolveRunId(pool, order, startTime) {
     `);
 
   if (byLineResult.recordset.length > 0) {
-    return byLineResult.recordset[0].run_id;
+    const matchedRunId = byLineResult.recordset[0].run_id;
+    if (!resolvedRunId || String(resolvedRunId) !== String(matchedRunId)) {
+      resolvedRunId = matchedRunId;
+    }
   }
 
-  if (!order.plant || !order.shift) {
+  if (!resolvedRunId && order.plant && order.shift) {
+    const fallbackResult = await pool
+      .request()
+      .input("plant", sql.NVarChar, order.plant)
+      .input("line", sql.NVarChar, line)
+      .input("shift", sql.NVarChar, order.shift)
+      .input("start_time", sql.VarChar, startTime)
+      .query(`
+        SELECT TOP 1 run_id
+        FROM [dbo].[ProductionRun]
+        WHERE plant = @plant
+          AND line = @line
+          AND shift = @shift
+          AND CONVERT(DATETIME, @start_time, 120) >= start_time
+          AND (end_time IS NULL OR CONVERT(DATETIME, @start_time, 120) <= end_time)
+        ORDER BY start_time DESC
+      `);
+
+    if (fallbackResult.recordset.length > 0) {
+      resolvedRunId = fallbackResult.recordset[0].run_id;
+    }
+  }
+
+  if (!resolvedRunId) {
     throw new Error("Production run not found for the given time and line.");
   }
 
-  const fallbackResult = await pool
-    .request()
-    .input("plant", sql.NVarChar, order.plant)
-    .input("line", sql.NVarChar, line)
-    .input("shift", sql.NVarChar, order.shift)
-    .input("start_time", sql.VarChar, startTime)
-    .query(`
-      SELECT TOP 1 run_id
-      FROM [dbo].[ProductionRun]
-      WHERE plant = @plant
-        AND line = @line
-        AND shift = @shift
-        AND CONVERT(DATETIME, @start_time, 120) >= start_time
-        AND (end_time IS NULL OR CONVERT(DATETIME, @start_time, 120) <= end_time)
-      ORDER BY start_time DESC
-    `);
-
-  if (fallbackResult.recordset.length === 0) {
-    throw new Error("Production run not found for the given time and line.");
-  }
-
-  return fallbackResult.recordset[0].run_id;
+  return resolvedRunId;
 }
 
 async function resolveDowntimeMasterId(pool, order) {
@@ -637,6 +650,59 @@ async function deleteDowntime(id) {
   }
 }
 
+async function reassignDowntimeRun(fromRunId, toRunId) {
+  const parsedFromRunId = Number(fromRunId);
+  const parsedToRunId = Number(toRunId);
+
+  if (!Number.isFinite(parsedFromRunId) || !Number.isFinite(parsedToRunId)) {
+    throw new Error("from_run_id and to_run_id must be numeric.");
+  }
+
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("from_run_id", sql.BigInt, parsedFromRunId)
+    .input("to_run_id", sql.BigInt, parsedToRunId)
+    .query(`
+      UPDATE [dbo].[DowntimeEvent]
+      SET run_id = @to_run_id
+      WHERE run_id = @from_run_id
+    `);
+
+  return { rowsAffected: result.rowsAffected?.[0] || 0 };
+}
+
+async function reassignDowntimeEvents(eventIds, toRunId) {
+  if (!Array.isArray(eventIds) || eventIds.length === 0) {
+    throw new Error("event_ids is required.");
+  }
+
+  const parsedToRunId = Number(toRunId);
+  if (!Number.isFinite(parsedToRunId)) {
+    throw new Error("to_run_id must be numeric.");
+  }
+
+  const idList = eventIds
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id));
+
+  if (!idList.length) {
+    throw new Error("event_ids must be numeric.");
+  }
+
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("to_run_id", sql.BigInt, parsedToRunId)
+    .query(`
+      UPDATE [dbo].[DowntimeEvent]
+      SET run_id = @to_run_id
+      WHERE event_id IN (${idList.join(",")})
+    `);
+
+  return { rowsAffected: result.rowsAffected?.[0] || 0 };
+}
+
 module.exports = {
   getDowntimeList,
   getDowntimeMaster,
@@ -648,4 +714,6 @@ module.exports = {
   getDowntimeOrder,
   getDowntimeData,
   deleteDowntime,
+  reassignDowntimeRun,
+  reassignDowntimeEvents,
 };
