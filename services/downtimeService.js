@@ -2,6 +2,49 @@ const sql = require("mssql");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
+function normalizeLine(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const line = String(value).trim();
+  return line ? line.toUpperCase() : null;
+}
+
+function normalizeCategory(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const category = String(value).trim();
+  if (!category) {
+    return null;
+  }
+
+  return category === "Breakdown/Minor Stop" ? "Minor Stop" : category;
+}
+
+function resolveCategoryByDuration(category, durationMin) {
+  if (!category || durationMin === null) {
+    return category;
+  }
+
+  if (category === "Breakdown" && durationMin > 0 && durationMin < 10) {
+    return "Minor Stop";
+  }
+
+  return category;
+}
+
+function normalizeNullableText(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const text = String(value).trim();
+  return text || null;
+}
+
 async function getDowntimeList() {
   try {
     const pool = await getPool();
@@ -21,7 +64,7 @@ async function getDowntimeMaster(line, category) {
     const pool = await getPool();
     const downtime = await pool
       .request()
-      .input("line", sql.VarChar, line)
+      .input("line", sql.VarChar, normalizeLine(line))
       .input("category", sql.VarChar, `%${category}%`)
       .query(
         `SELECT * FROM [dbo].[DowntimeMasterNew]
@@ -41,7 +84,7 @@ async function getDowntimeMasterByLine(line) {
     const pool = await getPool();
     const downtime = await pool
       .request()
-      .input("line", sql.VarChar, line)
+      .input("line", sql.VarChar, normalizeLine(line))
       .query(
         `SELECT * FROM [dbo].[DowntimeMasterNew]
          WHERE line = @line`
@@ -54,12 +97,41 @@ async function getDowntimeMasterByLine(line) {
   }
 }
 
+async function getChangeOverTargets(line) {
+  try {
+    const normalizedLine = normalizeLine(line);
+    if (!normalizedLine) {
+      throw new Error("Line is required.");
+    }
+
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("line", sql.NVarChar, normalizedLine)
+      .query(`
+        SELECT
+          id,
+          line,
+          step,
+          target_min
+        FROM [dbo].[ChangeOverTarget]
+        WHERE line = @line
+        ORDER BY id ASC
+      `);
+
+    return result.recordset;
+  } catch (error) {
+    console.error("Error in getChangeOverTargets:", error);
+    throw error;
+  }
+}
+
 function getStartTime(order) {
-  return order.start_time || order.date;
+  return order.startTime || order.start_time || order.date;
 }
 
 function getDurationMin(order) {
-  const raw = order.duration_min ?? order.minutes;
+  const raw = order.duration ?? order.duration_min ?? order.minutes;
   const parsed = parseInt(raw, 10);
   return Number.isNaN(parsed) ? null : parsed;
 }
@@ -69,10 +141,36 @@ async function resolveRunId(pool, order, startTime) {
     return order.run_id;
   }
 
-  const result = await pool
+  const line = normalizeLine(order.line);
+  if (!line) {
+    throw new Error("Line is required.");
+  }
+
+  const byLineResult = await pool
+    .request()
+    .input("line", sql.NVarChar, line)
+    .input("start_time", sql.VarChar, startTime)
+    .query(`
+      SELECT TOP 1 run_id
+      FROM [dbo].[ProductionRun]
+      WHERE line = @line
+        AND start_time <= CONVERT(DATETIME, @start_time, 120)
+        AND (end_time IS NULL OR end_time >= CONVERT(DATETIME, @start_time, 120))
+      ORDER BY start_time DESC
+    `);
+
+  if (byLineResult.recordset.length > 0) {
+    return byLineResult.recordset[0].run_id;
+  }
+
+  if (!order.plant || !order.shift) {
+    throw new Error("Production run not found for the given time and line.");
+  }
+
+  const fallbackResult = await pool
     .request()
     .input("plant", sql.NVarChar, order.plant)
-    .input("line", sql.NVarChar, order.line)
+    .input("line", sql.NVarChar, line)
     .input("shift", sql.NVarChar, order.shift)
     .input("start_time", sql.VarChar, startTime)
     .query(`
@@ -86,11 +184,11 @@ async function resolveRunId(pool, order, startTime) {
       ORDER BY start_time DESC
     `);
 
-  if (result.recordset.length === 0) {
+  if (fallbackResult.recordset.length === 0) {
     throw new Error("Production run not found for the given time and line.");
   }
 
-  return result.recordset[0].run_id;
+  return fallbackResult.recordset[0].run_id;
 }
 
 async function resolveDowntimeMasterId(pool, order) {
@@ -98,20 +196,87 @@ async function resolveDowntimeMasterId(pool, order) {
     return order.downtimemaster_id;
   }
 
-  const result = await pool
-    .request()
-    .input("line", sql.NVarChar, order.line)
-    .input("category", sql.NVarChar, order.downtime_category)
-    .input("downtime", sql.NVarChar, order.jenis)
-    .query(`
-      SELECT TOP 1 id
-      FROM [dbo].[DowntimeMasterNew]
-      WHERE line = @line
-        AND downtime_category = @category
-        AND downtime = @downtime
-    `);
+  const line = normalizeLine(order.line);
+  const durationMin = getDurationMin(order);
+  const category = resolveCategoryByDuration(
+    normalizeCategory(order.category ?? order.downtime_category),
+    durationMin
+  );
+  const details = normalizeNullableText(order.details);
 
-  if (result.recordset.length === 0) {
+  let type = normalizeNullableText(order.type ?? order.jenis ?? order.downtime);
+  let suffix = null;
+
+  if (!line || !category || !type) {
+    throw new Error("Line, downtime category and downtime type are required.");
+  }
+
+  if (type && type.includes("-")) {
+    const [prefix, ...rest] = type.split("-");
+    const extracted = rest.join("-").trim();
+
+    if (prefix && prefix.trim()) {
+      type = prefix.trim();
+    }
+
+    if (extracted) {
+      suffix = extracted;
+    }
+  }
+
+  const lookupMaster = async (categoryValue, withDetails) => {
+    const request = pool
+      .request()
+      .input("line", sql.NVarChar, line)
+      .input("category", sql.NVarChar, categoryValue)
+      .input("type", sql.NVarChar, type)
+      .input("suffix", sql.NVarChar, suffix);
+
+    if (!withDetails) {
+      return request.query(`
+        SELECT TOP 1 id
+        FROM [dbo].[DowntimeMasterNew]
+        WHERE line = @line
+          AND downtime_category = @category
+          AND (
+            (@suffix IS NULL AND downtime = @type)
+            OR (@suffix IS NOT NULL AND downtime LIKE '%' + @suffix)
+          )
+      `);
+    }
+
+    return request
+      .input("details", sql.NVarChar, details)
+      .query(`
+        SELECT TOP 1 id
+        FROM [dbo].[DowntimeMasterNew]
+        WHERE line = @line
+          AND downtime_category = @category
+          AND (
+            (@suffix IS NULL AND downtime = @type)
+            OR (@suffix IS NOT NULL AND downtime LIKE '%' + @suffix)
+          )
+          AND (
+            (@details IS NULL AND (details IS NULL OR details = ''))
+            OR details = @details
+          )
+      `);
+  };
+
+  let result = await lookupMaster(category, true);
+
+  if (!result.recordset.length && details) {
+    result = await lookupMaster(category, false);
+  }
+
+  if (!result.recordset.length && category === "Minor Stop") {
+    result = await lookupMaster("Breakdown", true);
+    if (!result.recordset.length && details) {
+      result = await lookupMaster("Breakdown", false);
+    }
+  }
+
+  if (!result.recordset.length) {
     throw new Error("Downtime master not found for the given selection.");
   }
 
@@ -129,9 +294,10 @@ async function createDowntime(order) {
     const pool = await getPool();
     const startTime = getStartTime(order);
     const durationMin = getDurationMin(order);
+    const line = normalizeLine(order.line);
 
-    if (!startTime || durationMin === null) {
-      throw new Error("Start time and duration are required.");
+    if (!startTime || durationMin === null || !line) {
+      throw new Error("Line, start time and duration are required.");
     }
 
     const runId = await resolveRunId(pool, order, startTime);
@@ -139,19 +305,21 @@ async function createDowntime(order) {
 
     const existingDowntime = await pool
       .request()
-      .input("run_id", sql.BigInt, runId)
+      .input("line", sql.NVarChar, line)
       .input("start_time", sql.VarChar, startTime)
       .input("duration_min", sql.Int, durationMin)
       .query(`
-        SELECT TOP 1 event_id
-        FROM [dbo].[DowntimeEvent]
-        WHERE run_id = @run_id
-          AND start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
-          AND end_time > CONVERT(DATETIME, @start_time, 120)
+        SELECT TOP 1 e.event_id
+        FROM [dbo].[DowntimeEvent] e
+        JOIN [dbo].[DowntimeMasterNew] m
+          ON m.id = e.downtimemaster_id
+        WHERE m.line = @line
+          AND e.start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
+          AND e.end_time > CONVERT(DATETIME, @start_time, 120)
       `);
 
     if (existingDowntime.recordset.length > 0) {
-      throw new Error("Downtime conflicts with existing entries.");
+      throw new Error("Downtime overlaps with an existing entry.");
     }
 
     const result = await pool
@@ -192,6 +360,7 @@ async function createDowntime(order) {
     return newOrder;
   } catch (err) {
     console.error("Error creating downtime event:", err);
+    throw err;
   }
 }
 
@@ -201,13 +370,14 @@ async function updateDowntime(order) {
     const startTime = getStartTime(order);
     const durationMin = getDurationMin(order);
     const eventId = order.id ?? order.event_id;
+    const line = normalizeLine(order.line);
 
     if (!eventId) {
       throw new Error("Event id is required.");
     }
 
-    if (!startTime || durationMin === null) {
-      throw new Error("Start time and duration are required.");
+    if (!startTime || durationMin === null || !line) {
+      throw new Error("Line, start time and duration are required.");
     }
 
     const runId = await resolveRunId(pool, order, startTime);
@@ -216,21 +386,23 @@ async function updateDowntime(order) {
     // Cek konflik waktu (selain id yang sedang diupdate)
     const existingDowntime = await pool
       .request()
-      .input("run_id", sql.BigInt, runId)
+      .input("line", sql.NVarChar, line)
       .input("event_id", sql.BigInt, eventId)
       .input("start_time", sql.VarChar, startTime)
       .input("duration_min", sql.Int, durationMin)
       .query(`
-        SELECT TOP 1 event_id
-        FROM [dbo].[DowntimeEvent]
-        WHERE run_id = @run_id
-          AND event_id != @event_id
-          AND start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
-          AND end_time > CONVERT(DATETIME, @start_time, 120)
+        SELECT TOP 1 e.event_id
+        FROM [dbo].[DowntimeEvent] e
+        JOIN [dbo].[DowntimeMasterNew] m
+          ON m.id = e.downtimemaster_id
+        WHERE m.line = @line
+          AND e.event_id != @event_id
+          AND e.start_time < DATEADD(MINUTE, @duration_min, CONVERT(DATETIME, @start_time, 120))
+          AND e.end_time > CONVERT(DATETIME, @start_time, 120)
       `);
 
     if (existingDowntime.recordset.length > 0) {
-      throw new Error("Downtime conflicts with existing entries.");
+      throw new Error("Downtime overlaps with an existing entry.");
     }
 
     // Lakukan update
@@ -290,7 +462,8 @@ async function getDowntimeOrder() {
           pr.line,
           pr.shift,
           dm.downtime_category,
-          dm.downtime
+          dm.downtime,
+          dm.details
         FROM [dbo].[DowntimeEvent] e
         JOIN [dbo].[ProductionRun] pr ON pr.run_id = e.run_id
         LEFT JOIN [dbo].[DowntimeMasterNew] dm ON dm.id = e.downtimemaster_id
@@ -331,6 +504,7 @@ async function getDowntimeOrder() {
         downtime_category: item.downtime_category,
         mesin: item.machine,
         jenis: item.downtime,
+        details: item.details,
         keterangan: item.note,
         minutes: item.duration_min,
         completed: 0,
@@ -361,7 +535,7 @@ async function getDowntimeData(plant, line, date, shift) {
     const downtime = await pool
       .request()
       .input("plant", sql.NVarChar, plant)
-      .input("line", sql.NVarChar, line)
+      .input("line", sql.NVarChar, normalizeLine(line))
       .input("date", sql.VarChar, date) // format: 'YYYY-MM-DD'
       .input("shift", sql.NVarChar, shift)
       .query(`
@@ -374,6 +548,7 @@ async function getDowntimeData(plant, line, date, shift) {
           dm.downtime_category AS Downtime_Category,
           e.machine AS Mesin,
           dm.downtime AS Jenis,
+          dm.details AS Details,
           e.note AS Keterangan,
           e.duration_min AS Minutes,
           CAST(0 AS INT) AS Completed
@@ -419,6 +594,7 @@ module.exports = {
   getDowntimeList,
   getDowntimeMaster,
   getDowntimeMasterByLine,
+  getChangeOverTargets,
   getRunIdByContext,
   createDowntime,
   updateDowntime,

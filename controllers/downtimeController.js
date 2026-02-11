@@ -53,14 +53,33 @@ exports.getDowntimeMasterByLine = async (req, res) => {
   }
 };
 
+exports.getChangeOverTargets = async (req, res) => {
+  try {
+    const line = req.query.line;
+
+    if (!line) {
+      return res.status(400).json({ message: "line is required" });
+    }
+
+    const targets = await downtimeService.getChangeOverTargets(line);
+    return res.status(200).json(targets);
+  } catch (error) {
+    console.error(error);
+    if (error.message?.includes("required")) {
+      return res.status(400).json({ message: error.message });
+    }
+    return res
+      .status(500)
+      .json({ message: "Failed to get change over targets" });
+  }
+};
+
 exports.resolveRunId = async (req, res) => {
   try {
     const { plant, line, shift, start_time: startTime } = req.query;
 
-    if (!plant || !line || !shift || !startTime) {
-      return res
-        .status(400)
-        .json({ message: "plant, line, shift, and start_time are required" });
+    if (!line || !startTime) {
+      return res.status(400).json({ message: "line and start_time are required" });
     }
 
     const runId = await downtimeService.getRunIdByContext(
@@ -73,6 +92,12 @@ exports.resolveRunId = async (req, res) => {
     return res.status(200).json({ run_id: runId });
   } catch (error) {
     console.error("Controller error:", error);
+    if (error.message?.includes("not found")) {
+      return res.status(404).json({ message: error.message });
+    }
+    if (error.message?.includes("required")) {
+      return res.status(400).json({ message: error.message });
+    }
     return res.status(500).json({ message: "Failed to resolve run id" });
   }
 };
@@ -83,15 +108,18 @@ exports.createDowntime = async (req, res) => {
 
     const newDowntime = await downtimeService.createDowntime(data);
 
-    if (!newDowntime) {
-      return res
-        .status(400)
-        .json({ message: "Downtime conflicts with existing entries" });
-    }
-
     return res.status(201).json(newDowntime);
   } catch (error) {
     console.error("Controller error:", error);
+    if (error.message?.includes("overlaps")) {
+      return res.status(409).json({ message: error.message });
+    }
+    if (error.message?.includes("not found")) {
+      return res.status(404).json({ message: error.message });
+    }
+    if (error.message?.includes("required")) {
+      return res.status(400).json({ message: error.message });
+    }
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -101,7 +129,6 @@ exports.updateDowntime = async (req, res) => {
     const data = req.body;
 
     const updatedDowntime = await downtimeService.updateDowntime(data);
-
     if (!updatedDowntime) {
       return res.status(404).json({ message: "Downtime not found" });
     }
@@ -109,9 +136,16 @@ exports.updateDowntime = async (req, res) => {
     return res.status(200).json(updatedDowntime);
   } catch (error) {
     console.error("Controller error:", error);
-    return res
-      .status(500)
-      .json({ message: "Downtime conflicts with existing entries" });
+    if (error.message?.includes("overlaps")) {
+      return res.status(409).json({ message: error.message });
+    }
+    if (error.message?.includes("not found")) {
+      return res.status(404).json({ message: error.message });
+    }
+    if (error.message?.includes("required")) {
+      return res.status(400).json({ message: error.message });
+    }
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -168,6 +202,9 @@ exports.deleteDowntime = async (req, res) => {
     return res.status(200).json(deletedDowntime);
   } catch (error) {
     console.error("Controller error:", error);
+    if (error.message?.includes("No record found")) {
+      return res.status(404).json({ message: "Downtime not found" });
+    }
     return res.status(500).json({ message: "Internal server error" });
   }
 };
