@@ -143,7 +143,8 @@ function normalizeStartTime(value) {
   if (hasTimezoneInfo) {
     const zonedTime = moment.parseZone(raw, moment.ISO_8601, true);
     if (zonedTime.isValid()) {
-      return zonedTime.utc().format("YYYY-MM-DD HH:mm");
+      // Normalize zoned input to WIB wall clock for SQL DATETIME storage.
+      return zonedTime.utcOffset(7).format("YYYY-MM-DD HH:mm");
     }
   }
 
@@ -161,13 +162,13 @@ function normalizeStartTime(value) {
   );
 
   if (plainTime.isValid()) {
-    // Input without timezone is treated as WIB (+07), then normalized to UTC.
-    return plainTime.utcOffset(7, true).utc().format("YYYY-MM-DD HH:mm");
+    // Plain input is treated as WIB wall clock and stored as-is.
+    return plainTime.format("YYYY-MM-DD HH:mm");
   }
 
   const fallback = moment(raw);
   if (fallback.isValid()) {
-    return fallback.utc().format("YYYY-MM-DD HH:mm");
+    return fallback.format("YYYY-MM-DD HH:mm");
   }
 
   throw new Error("Invalid start time format.");
@@ -500,8 +501,8 @@ async function getDowntimeOrder() {
       .query(`
         SELECT
           e.event_id,
-          e.start_time,
-          e.end_time,
+          CONVERT(VARCHAR(23), e.start_time, 121) AS start_time,
+          CONVERT(VARCHAR(23), e.end_time, 121) AS end_time,
           e.duration_min,
           e.machine,
           e.note,
@@ -522,7 +523,7 @@ async function getDowntimeOrder() {
     const grouped = {};
 
     records.forEach((item) => {
-      const dateOnly = item.start_time.toISOString().split("T")[0]; // hanya ambil YYYY-MM-DD
+      const dateOnly = String(item.start_time).split(" ")[0]; // YYYY-MM-DD
       const key = `${item.plant}_${dateOnly}_${item.shift}_${item.line}`;
 
       if (!grouped[key]) {
@@ -537,10 +538,9 @@ async function getDowntimeOrder() {
 
       const endTime =
         item.end_time ??
-        new Date(
-          new Date(item.start_time).getTime() +
-            parseInt(item.duration_min) * 60000
-        );
+        moment(item.start_time, "YYYY-MM-DD HH:mm:ss.SSS")
+          .add(parseInt(item.duration_min, 10) || 0, "minutes")
+          .format("YYYY-MM-DD HH:mm:ss.SSS");
 
       grouped[key].data.push({
         id: item.event_id,
@@ -590,7 +590,7 @@ async function getDowntimeData(plant, line, date, shift) {
           e.event_id AS id,
           pr.plant AS Plant,
           pr.line AS Line,
-          e.start_time AS Date,
+          CONVERT(VARCHAR(23), e.start_time, 121) AS Date,
           pr.shift AS Shift,
           dm.downtime_category AS Downtime_Category,
           e.machine AS Mesin,
