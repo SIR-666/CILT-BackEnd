@@ -601,6 +601,7 @@ async function getDowntimeData(plant, line, date, shift) {
       .query(`
         SELECT
           e.event_id AS id,
+          e.run_id AS run_id,
           pr.plant AS Plant,
           pr.line AS Line,
           CONVERT(VARCHAR(23), e.start_time, 121) AS Date,
