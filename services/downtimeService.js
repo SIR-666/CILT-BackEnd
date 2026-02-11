@@ -650,6 +650,41 @@ async function deleteDowntime(id) {
   }
 }
 
+async function getProductionRunsByCombination(plant, line, date, shift) {
+  try {
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("plant", sql.NVarChar, plant)
+      .input("line", sql.NVarChar, normalizeLine(line))
+      .input("date", sql.VarChar, date)
+      .input("shift", sql.NVarChar, shift)
+      .query(`
+        SELECT
+          run_id,
+          plant,
+          line,
+          shift,
+          CONVERT(VARCHAR(23), start_time, 121) AS start_time,
+          CONVERT(VARCHAR(23), end_time, 121) AS end_time
+        FROM [dbo].[ProductionRun]
+        WHERE plant = @plant
+          AND line = @line
+          AND shift = @shift
+          AND (
+            CAST(start_time AS DATE) = CAST(@date AS DATE)
+            OR CAST(ISNULL(end_time, start_time) AS DATE) = CAST(@date AS DATE)
+          )
+        ORDER BY start_time ASC
+      `);
+
+    return result.recordset;
+  } catch (error) {
+    console.error("Error in get production runs by combination:", error);
+    return [];
+  }
+}
+
 async function reassignDowntimeRun(fromRunId, toRunId) {
   const parsedFromRunId = Number(fromRunId);
   const parsedToRunId = Number(toRunId);
@@ -713,6 +748,7 @@ module.exports = {
   updateDowntime,
   getDowntimeOrder,
   getDowntimeData,
+  getProductionRunsByCombination,
   deleteDowntime,
   reassignDowntimeRun,
   reassignDowntimeEvents,

@@ -18,6 +18,10 @@ router.post("/downtime", downtimeController.createDowntime);
 router.put("/downtime", downtimeController.updateDowntime);
 router.get("/getDowntimeOrder", downtimeController.getDowntimeOrder);
 router.get("/getDowntimeData", downtimeController.getDowntimeData);
+router.get(
+  "/getProductionRunsByCombination",
+  downtimeController.getProductionRunsByCombination
+);
 router.delete("/downtime/:id", downtimeController.deleteDowntime);
 router.post("/reassignDowntimeRun", downtimeController.reassignDowntimeRun);
 router.post(

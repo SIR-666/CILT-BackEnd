@@ -189,6 +189,30 @@ exports.getDowntimeData = async (req, res) => {
   }
 };
 
+exports.getProductionRunsByCombination = async (req, res) => {
+  try {
+    const { plant, line, date, shift } = req.query;
+
+    if (!plant || !line || !date || !shift) {
+      return res
+        .status(400)
+        .json({ message: "plant, line, date, and shift are required" });
+    }
+
+    const productionRuns = await downtimeService.getProductionRunsByCombination(
+      plant,
+      line,
+      date,
+      shift
+    );
+
+    return res.status(200).json(productionRuns || []);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 exports.deleteDowntime = async (req, res) => {
   try {
     const id = req.params.id;
