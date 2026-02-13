@@ -246,7 +246,7 @@ async function submitDraft(id) {
             .input("batch", d.batch)
             .input("inspectionData", d.inspectionData)
             .input("remarks", remarks)
-            .input("status", 1)
+            .input("status", 0)
             .query(`
                 INSERT INTO tb_CILT (
                     processOrder, packageType, plant, line, shift,
