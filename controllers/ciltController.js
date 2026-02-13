@@ -113,7 +113,14 @@ exports.getReportCILTAll = async (req, res) => {
 exports.getCILTByProcessOrder = async (req, res) => {
   try {
     const processOrder = req.query.processOrder;
-    const order = await ciltService.checkCiltByProcessOrder(processOrder);
+    const filters = {
+      packageType: req.query.packageType,
+      plant: req.query.plant,
+      line: req.query.line,
+      machine: req.query.machine,
+      shift: req.query.shift,
+    };
+    const order = await ciltService.checkCiltByProcessOrder(processOrder, filters);
     if (!order) return res.status(404).json({ message: "CILT record not found" });
     return res.status(200).json(order);
   } catch (error) {

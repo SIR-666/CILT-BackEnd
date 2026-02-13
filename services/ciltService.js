@@ -298,13 +298,40 @@ async function getSKU(filter) {
   }
 }
 
-async function checkCiltByProcessOrder(processOrder) {
+async function checkCiltByProcessOrder(processOrder, filters = {}) {
   try {
     const pool = await getPool();
-    const result = await pool
-      .request()
-      .input("processOrder", sql.VarChar, processOrder)
-      .query("SELECT * FROM tb_CILT WHERE processOrder = @processOrder");
+    const request = pool.request().input("processOrder", sql.VarChar, processOrder);
+    let query = `
+      SELECT TOP 1 *
+      FROM tb_CILT
+      WHERE processOrder = @processOrder
+    `;
+
+    if (filters.packageType) {
+      query += " AND packageType = @packageType";
+      request.input("packageType", sql.VarChar, filters.packageType);
+    }
+    if (filters.plant) {
+      query += " AND plant = @plant";
+      request.input("plant", sql.VarChar, filters.plant);
+    }
+    if (filters.line) {
+      query += " AND line = @line";
+      request.input("line", sql.VarChar, filters.line);
+    }
+    if (filters.machine) {
+      query += " AND machine = @machine";
+      request.input("machine", sql.VarChar, filters.machine);
+    }
+    if (filters.shift) {
+      query += " AND shift = @shift";
+      request.input("shift", sql.VarChar, filters.shift);
+    }
+
+    query += " ORDER BY ISNULL(updatedAt, submitTime) DESC, id DESC";
+
+    const result = await request.query(query);
 
     if (result.recordset.length > 0) {
       return {
