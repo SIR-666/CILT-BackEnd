@@ -40,7 +40,7 @@ async function autoSaveDraft(data) {
 
     // If draft ID is provided, update by ID
     if (data.id) {
-        await pool.request()
+        const updateByIdResult = await pool.request()
             .input("id", sql.Int, data.id)
             .input("inspectionData", sql.NVarChar, inspectionJson)
             .input("descriptionData", sql.NVarChar, descriptionJson)
@@ -64,8 +64,14 @@ async function autoSaveDraft(data) {
                 WHERE id = @id
             `);
 
-        console.log(`[autoSaveDraft] Updated draft ID: ${data.id}`);
-        return { id: data.id, mode: "update-by-id" };
+        const updatedRows = updateByIdResult?.rowsAffected?.[0] || 0;
+        if (updatedRows > 0) {
+            console.log(`[autoSaveDraft] Updated draft ID: ${data.id}`);
+            return { id: data.id, mode: "update-by-id" };
+        }
+
+        // Stale ID: continue with upsert logic below.
+        console.log(`[autoSaveDraft] Draft ID ${data.id} not found, fallback to upsert by context`);
     }
 
     // Check if draft exists by processOrder + packageType

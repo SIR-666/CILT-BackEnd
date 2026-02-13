@@ -67,10 +67,23 @@ exports.submit = async (req, res) => {
         const result = await service.submitDraft(req.params.id);
         res.json(result);
     } catch (error) {
-        console.error("[submit] Error:", error);
+        console.error("Error:", error);
+        const message = error?.message || "Failed to submit draft";
+        if (/draft not found/i.test(message)) {
+            return res.status(404).json({
+                error: "Draft not found",
+                message,
+            });
+        }
+        if (/cannot submit draft/i.test(message)) {
+            return res.status(400).json({
+                error: "Invalid draft",
+                message,
+            });
+        }
         res.status(500).json({ 
             error: "Failed to submit draft",
-            message: error.message 
+            message
         });
     }
 };
