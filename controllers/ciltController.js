@@ -1,5 +1,50 @@
 const ciltService = require("../services/ciltService");
 
+const COORDINATOR_ROLE_ID = 11;
+const SUPERVISOR_ROLE_ID = 9;
+
+const normalizeRoleToken = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_-]+/g, "");
+
+const parseRoleId = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const extractRoleMeta = (payload = {}) => {
+  const rawRole = payload.roleId ?? payload.role ?? payload.userRoleId;
+  const rawRoleName =
+    payload.roleName ??
+    payload.userRole ??
+    payload.profile ??
+    payload.roleLabel ??
+    (parseRoleId(payload.role) === null ? payload.role : "");
+
+  return {
+    roleId: parseRoleId(rawRole),
+    roleName: normalizeRoleToken(rawRoleName),
+  };
+};
+
+const hasAnyRoleKeyword = (roleName, keywords) =>
+  keywords.some((keyword) => roleName.includes(keyword));
+
+const isElevatedApprover = ({ roleName }) =>
+  hasAnyRoleKeyword(roleName, ["PRF", "MGR", "MANAGER"]);
+
+const canApproveCoordinator = (roleMeta) =>
+  roleMeta.roleId === COORDINATOR_ROLE_ID ||
+  hasAnyRoleKeyword(roleMeta.roleName, ["COOR", "COORD"]) ||
+  isElevatedApprover(roleMeta);
+
+const canApproveSupervisor = (roleMeta) =>
+  roleMeta.roleId === SUPERVISOR_ROLE_ID ||
+  hasAnyRoleKeyword(roleMeta.roleName, ["SPV", "SUPERVISOR"]) ||
+  isElevatedApprover(roleMeta);
+
 exports.createCILT = async (req, res) => {
   try {
     const order = req.body;
@@ -132,9 +177,11 @@ exports.getCILTByProcessOrder = async (req, res) => {
 exports.approveByCoor = async (req, res) => {
   try {
     const id = req.params.id;
-    const { username, role } = req.body;
-    if (parseInt(role) !== 11) {
-      return res.status(403).json({ message: "Unauthorized: Only Coordinator can approve" });
+    const { username } = req.body;
+    const roleMeta = extractRoleMeta(req.body);
+
+    if (!canApproveCoordinator(roleMeta)) {
+      return res.status(403).json({ message: "Unauthorized: only Coordinator, PRF, or Manager can approve" });
     }
     if (!username) {
       return res.status(400).json({ message: "Username is required" });
@@ -150,14 +197,19 @@ exports.approveByCoor = async (req, res) => {
 exports.approveBySpv = async (req, res) => {
   try {
     const id = req.params.id;
-    const { username, role } = req.body;
-    if (parseInt(role) !== 9) {
-      return res.status(403).json({ message: "Unauthorized: Only Supervisor can approve" });
+    const { username } = req.body;
+    const roleMeta = extractRoleMeta(req.body);
+    const bypassCoordinatorApproval = isElevatedApprover(roleMeta);
+
+    if (!canApproveSupervisor(roleMeta)) {
+      return res.status(403).json({ message: "Unauthorized: only Supervisor, PRF, or Manager can approve" });
     }
     if (!username) {
       return res.status(400).json({ message: "Username is required" });
     }
-    const result = await ciltService.approveBySpv(id, username);
+    const result = await ciltService.approveBySpv(id, username, {
+      bypassCoordinatorApproval,
+    });
     return res.status(200).json(result);
   } catch (error) {
     console.error("Controller error:", error);

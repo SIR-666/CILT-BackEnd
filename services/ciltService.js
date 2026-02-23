@@ -378,9 +378,10 @@ async function approveByCoor(id, username) {
   }
 }
 
-async function approveBySpv(id, username) {
+async function approveBySpv(id, username, options = {}) {
   try {
     const pool = await getPool();
+    const bypassCoordinatorApproval = options.bypassCoordinatorApproval === true;
 
     const checkResult = await pool
       .request()
@@ -391,7 +392,7 @@ async function approveBySpv(id, username) {
       throw new Error("Record not found");
     }
 
-    if (checkResult.recordset[0].approval_coor !== 1) {
+    if (!bypassCoordinatorApproval && checkResult.recordset[0].approval_coor !== 1) {
       throw new Error("Waiting for Coordinator approval first");
     }
 
