@@ -455,28 +455,113 @@ async function deleteCIPReport(id) {
   }
 }
 
-async function updateApprovalStatus(id, roleId, action, userName, dateNow) {
+const COORDINATOR_ROLE_ID = 11;
+const SUPERVISOR_ROLE_ID = 9;
+
+const normalizeRoleToken = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_-]+/g, "");
+
+const parseRoleId = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const normalizeApprovalLevel = (value) => {
+  const token = normalizeRoleToken(value);
+  if (!token) return null;
+  if (token.includes("COOR") || token.includes("COORD")) return "coor";
+  if (token.includes("SPV") || token.includes("SUPERVISOR")) return "spv";
+  return null;
+};
+
+const resolveApprovalTarget = ({ roleId, roleName, approvalLevel, currentState }) => {
+  const parsedRoleId = parseRoleId(roleId);
+  const roleNameFallback = parsedRoleId === null ? roleId : "";
+  const normalizedRoleName = normalizeRoleToken(roleName || roleNameFallback);
+  const normalizedLevel = normalizeApprovalLevel(approvalLevel);
+
+  const isElevatedApprover =
+    normalizedRoleName.includes("PRF") ||
+    normalizedRoleName.includes("MGR") ||
+    normalizedRoleName.includes("MANAGER");
+  const isCoordinatorRole =
+    parsedRoleId === COORDINATOR_ROLE_ID ||
+    normalizedRoleName.includes("COOR") ||
+    normalizedRoleName.includes("COORD");
+  const isSupervisorRole =
+    parsedRoleId === SUPERVISOR_ROLE_ID ||
+    normalizedRoleName.includes("SPV") ||
+    normalizedRoleName.includes("SUPERVISOR");
+
+  if (isElevatedApprover) {
+    if (normalizedLevel) return normalizedLevel;
+    if (Number(currentState.approval_coor) !== 1) return "coor";
+    if (Number(currentState.approval_spv) !== 1) return "spv";
+    throw new Error("Report already fully approved");
+  }
+
+  if (isCoordinatorRole) return "coor";
+  if (isSupervisorRole) return "spv";
+
+  throw new Error("Unauthorized role for approval");
+};
+
+async function updateApprovalStatus(id, roleId, action, userName, dateNow, options = {}) {
   try {
     const pool = await getPool();
+    const { roleName = "", approvalLevel = "" } = options;
 
     const approvalValue = action === "approve" ? 1 : 2;
-    let query = "";
+    const stateResult = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .query(`
+        SELECT
+          ISNULL(approval_coor, 0) AS approval_coor,
+          ISNULL(approval_spv, 0) AS approval_spv
+        FROM tb_cip_reports
+        WHERE id = @id
+      `);
 
-    if (roleId === 9) {
-      query = `
-        UPDATE tb_cip_reports 
-        SET approval_spv = @val, approval_spv_by = @userName, approval_spv_at = @dateNow, updated_at = GETDATE() 
-        WHERE id = @id
-      `;
-    } else if (roleId === 11) {
-      query = `
-        UPDATE tb_cip_reports 
-        SET approval_coor = @val, approval_coor_by = @userName, approval_coor_at = @dateNow, updated_at = GETDATE() 
-        WHERE id = @id
-      `;
-    } else {
-      throw new Error("Unauthorized role for approval");
+    if (!stateResult.recordset.length) {
+      throw new Error("CIP report not found");
     }
+
+    const currentState = stateResult.recordset[0];
+    const approvalTarget = resolveApprovalTarget({
+      roleId,
+      roleName,
+      approvalLevel,
+      currentState,
+    });
+
+    if (approvalTarget === "spv" && Number(currentState.approval_coor) !== 1) {
+      throw new Error("Waiting for Coordinator approval first");
+    }
+
+    const query =
+      approvalTarget === "spv"
+        ? `
+          UPDATE tb_cip_reports
+          SET
+            approval_spv = @val,
+            approval_spv_by = @userName,
+            approval_spv_at = @dateNow,
+            updated_at = GETDATE()
+          WHERE id = @id
+        `
+        : `
+          UPDATE tb_cip_reports
+          SET
+            approval_coor = @val,
+            approval_coor_by = @userName,
+            approval_coor_at = @dateNow,
+            updated_at = GETDATE()
+          WHERE id = @id
+        `;
 
     const result = await pool.request()
       .input("val", sql.Int, approvalValue)
@@ -485,8 +570,15 @@ async function updateApprovalStatus(id, roleId, action, userName, dateNow) {
       .input("id", sql.Int, id)
       .query(query);
 
-    console.log("[updateApprovalStatus] Updated for ID:", id, "Action:", action);
-    return { id, roleId, action, rowsAffected: result.rowsAffected[0] };
+    console.log("[updateApprovalStatus] Updated for ID:", id, "Action:", action, "Target:", approvalTarget);
+    return {
+      id,
+      roleId: parseRoleId(roleId) ?? roleId,
+      roleName,
+      approvalTarget,
+      action,
+      rowsAffected: result.rowsAffected[0],
+    };
   } catch (error) {
     console.error("[updateApprovalStatus] Error:", error.message);
     throw error;

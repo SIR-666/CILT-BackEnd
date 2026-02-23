@@ -253,26 +253,40 @@ exports.submitCIPReport = async (req, res) => {
 exports.approveCIPReport = async (req, res) => {
   try {
     const { id } = req.params;
-    const { roleId, userName } = req.body;
+    const { roleId, roleName, approvalLevel, userName } = req.body;
 
-    const result = await cipService.updateApprovalStatus(id, roleId, "approve", userName, new Date());
+    const result = await cipService.updateApprovalStatus(
+      id,
+      roleId,
+      "approve",
+      userName,
+      new Date(),
+      { roleName, approvalLevel }
+    );
     res.status(200).json({ message: "Report approved", result });
   } catch (error) {
     console.error("[approveCIPReport] Error:", error);
-    res.status(500).json({ message: "Failed to approve report" });
+    res.status(500).json({ message: error?.message || "Failed to approve report" });
   }
 };
 
 exports.rejectCIPReport = async (req, res) => {
   try {
     const { id } = req.params;
-    const { roleId, userName } = req.body;
+    const { roleId, roleName, approvalLevel, userName } = req.body;
 
-    const result = await cipService.updateApprovalStatus(id, roleId, "reject", userName, new Date());
+    const result = await cipService.updateApprovalStatus(
+      id,
+      roleId,
+      "reject",
+      userName,
+      new Date(),
+      { roleName, approvalLevel }
+    );
     res.status(200).json({ message: "Report rejected", result });
   } catch (error) {
     console.error("[rejectCIPReport] Error:", error);
-    res.status(500).json({ message: "Failed to reject report" });
+    res.status(500).json({ message: error?.message || "Failed to reject report" });
   }
 };
 
