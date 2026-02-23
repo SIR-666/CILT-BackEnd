@@ -32,8 +32,20 @@ const extractRoleMeta = (payload = {}) => {
 const hasAnyRoleKeyword = (roleName, keywords) =>
   keywords.some((keyword) => roleName.includes(keyword));
 
-const isElevatedApprover = ({ roleName }) =>
-  hasAnyRoleKeyword(roleName, ["PRF", "MGR", "MANAGER"]);
+const isPRFApprover = ({ roleName }) =>
+  hasAnyRoleKeyword(roleName, ["PRF"]);
+
+const isManagerApprover = ({ roleName }) =>
+  hasAnyRoleKeyword(roleName, ["MGR", "MANAGER"]);
+
+const isElevatedApprover = (roleMeta) =>
+  isPRFApprover(roleMeta) || isManagerApprover(roleMeta);
+
+const getApproverRoleTag = (roleMeta, fallbackRoleTag) => {
+  if (isPRFApprover(roleMeta)) return "PRF";
+  if (isManagerApprover(roleMeta)) return "MGR";
+  return fallbackRoleTag;
+};
 
 const canApproveCoordinator = (roleMeta) =>
   roleMeta.roleId === COORDINATOR_ROLE_ID ||
@@ -179,6 +191,7 @@ exports.approveByCoor = async (req, res) => {
     const id = req.params.id;
     const { username } = req.body;
     const roleMeta = extractRoleMeta(req.body);
+    const approverRole = getApproverRoleTag(roleMeta, "COOR");
 
     if (!canApproveCoordinator(roleMeta)) {
       return res.status(403).json({ message: "Unauthorized: only Coordinator, PRF, or Manager can approve" });
@@ -186,7 +199,9 @@ exports.approveByCoor = async (req, res) => {
     if (!username) {
       return res.status(400).json({ message: "Username is required" });
     }
-    const result = await ciltService.approveByCoor(id, username);
+    const result = await ciltService.approveByCoor(id, username, {
+      approverRole,
+    });
     return res.status(200).json(result);
   } catch (error) {
     console.error("Controller error:", error);
@@ -200,6 +215,7 @@ exports.approveBySpv = async (req, res) => {
     const { username } = req.body;
     const roleMeta = extractRoleMeta(req.body);
     const bypassCoordinatorApproval = isElevatedApprover(roleMeta);
+    const approverRole = getApproverRoleTag(roleMeta, "SPV");
 
     if (!canApproveSupervisor(roleMeta)) {
       return res.status(403).json({ message: "Unauthorized: only Supervisor, PRF, or Manager can approve" });
@@ -209,6 +225,7 @@ exports.approveBySpv = async (req, res) => {
     }
     const result = await ciltService.approveBySpv(id, username, {
       bypassCoordinatorApproval,
+      approverRole,
     });
     return res.status(200).json(result);
   } catch (error) {
@@ -252,7 +269,7 @@ exports.getApprovalStatus = async (req, res) => {
   }
 };
 
-// ===== Master endpoints =====
+// Master endpoints
 exports.getMasterPlant = async (_req, res) => {
   try {
     const rows = await ciltService.getMasterPlant();

@@ -2,6 +2,33 @@ const sql = require("mssql");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
+const APPROVER_ROLE_MARKER_REGEX = /\s*\[ROLE:[A-Z]+\]\s*$/i;
+
+const normalizeApproverRoleTag = (value) => {
+  const token = String(value || "")
+    .trim()
+    .toUpperCase();
+
+  if (!token) return "";
+  if (token.includes("PRF")) return "PRF";
+  if (token.includes("MGR") || token.includes("MANAGER")) return "MGR";
+  if (token.includes("COOR") || token.includes("COORD")) return "COOR";
+  if (token.includes("SPV") || token.includes("SUPERVISOR")) return "SPV";
+  return "";
+};
+
+const formatApproverUsername = (username, approverRole) => {
+  const rawUsername = String(username || "").trim();
+  const cleanedUsername = rawUsername.replace(APPROVER_ROLE_MARKER_REGEX, "").trim();
+  const normalizedRoleTag = normalizeApproverRoleTag(approverRole);
+
+  if (!normalizedRoleTag) {
+    return cleanedUsername || rawUsername;
+  }
+
+  return `${cleanedUsername || rawUsername} [ROLE:${normalizedRoleTag}]`;
+};
+
 async function createCILT(order) {
   try {
     const pool = await getPool();
@@ -350,13 +377,14 @@ async function checkCiltByProcessOrder(processOrder, filters = {}) {
   }
 }
 
-async function approveByCoor(id, username) {
+async function approveByCoor(id, username, options = {}) {
   try {
     const pool = await getPool();
+    const formattedUsername = formatApproverUsername(username, options.approverRole);
     const result = await pool
       .request()
       .input("id", sql.Int, id)
-      .input("username", sql.VarChar, username)
+      .input("username", sql.VarChar, formattedUsername)
       .query(`
         UPDATE tb_CILT 
         SET 
@@ -364,11 +392,11 @@ async function approveByCoor(id, username) {
           approval_coor_by = @username,
           approval_coor_at = GETDATE(),
           updatedAt = GETDATE()
-        WHERE id = @id AND approval_coor = 0
+        WHERE id = @id
       `);
 
     if (result.rowsAffected[0] === 0) {
-      throw new Error("Record not found or already approved by coordinator");
+      throw new Error("Record not found");
     }
 
     return { success: true, message: "Approved by Coordinator" };
@@ -382,6 +410,7 @@ async function approveBySpv(id, username, options = {}) {
   try {
     const pool = await getPool();
     const bypassCoordinatorApproval = options.bypassCoordinatorApproval === true;
+    const formattedUsername = formatApproverUsername(username, options.approverRole);
 
     const checkResult = await pool
       .request()
@@ -396,26 +425,48 @@ async function approveBySpv(id, username, options = {}) {
       throw new Error("Waiting for Coordinator approval first");
     }
 
+    const autoApproveCoordinator =
+      bypassCoordinatorApproval && checkResult.recordset[0].approval_coor !== 1 ? 1 : 0;
+
     const result = await pool
       .request()
       .input("id", sql.Int, id)
-      .input("username", sql.VarChar, username)
+      .input("username", sql.VarChar, formattedUsername)
+      .input("autoApproveCoordinator", sql.Int, autoApproveCoordinator)
       .query(`
         UPDATE tb_CILT 
         SET 
           approval_spv = 1,
           approval_spv_by = @username,
           approval_spv_at = GETDATE(),
+          approval_coor = CASE
+            WHEN @autoApproveCoordinator = 1 THEN 1
+            ELSE approval_coor
+          END,
+          approval_coor_by = CASE
+            WHEN @autoApproveCoordinator = 1 AND approval_coor <> 1 THEN @username
+            ELSE approval_coor_by
+          END,
+          approval_coor_at = CASE
+            WHEN @autoApproveCoordinator = 1 AND approval_coor <> 1 THEN GETDATE()
+            ELSE approval_coor_at
+          END,
           approval = 1,
           updatedAt = GETDATE()
-        WHERE id = @id AND approval_spv = 0
+        WHERE id = @id
       `);
 
     if (result.rowsAffected[0] === 0) {
-      throw new Error("Record already approved by supervisor");
+      throw new Error("Record not found");
     }
 
-    return { success: true, message: "Approved by Supervisor" };
+    return {
+      success: true,
+      message:
+        autoApproveCoordinator === 1
+          ? "Approved by Supervisor (Coordinator auto-approved)"
+          : "Approved by Supervisor",
+    };
   } catch (error) {
     console.error("Error approving by supervisor:", error);
     throw error;
@@ -497,7 +548,7 @@ async function getApprovalStatus(id) {
   }
 }
 
-// ===== Masters for dropdowns =====
+// Masters for dropdowns
 async function getMasterPlant() {
   const pool = await getPool();
   const res = await pool.request().query(`
