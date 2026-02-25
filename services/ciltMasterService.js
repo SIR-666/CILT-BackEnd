@@ -2,6 +2,80 @@ const sql = require("mssql");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
+function normalizePackageType(value) {
+  return String(value || "")
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function isPaperA3Type(value) {
+  const normalizedType = normalizePackageType(value);
+  return normalizedType === "PAPER A3";
+}
+
+function toPaperA3Label(field) {
+  const normalized = String(field || "").toLowerCase();
+
+  if (normalized === "jam") return "Jam";
+  if (normalized === "roll") return "Roll";
+  if (normalized === "paper_order") return "Paper Order";
+  if (normalized === "qty_label") return "Qty Label";
+  if (normalized === "global_id") return "Global ID";
+  if (normalized === "count1_reading") return "Count 1 Reading";
+  if (normalized === "kondisi_paper") return "Kondisi";
+  if (normalized === "splicing_paper") return "Splicing";
+  if (normalized === "mpm_strip_jam") return "Jam";
+  if (normalized === "mpm_strip_lot_no") return "Lot No.";
+  if (normalized === "mpm_strip_kode") return "Kode";
+
+  return String(field || "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+async function getPaperA3MasterColumns() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query(`
+      SELECT COLUMN_NAME, ORDINAL_POSITION
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'tb_CILT_package_a3_paper'
+      ORDER BY ORDINAL_POSITION ASC
+    `);
+
+    return (result.recordset || [])
+      .map((row, index) => {
+        const field = String(row?.COLUMN_NAME || "").trim();
+        const normalizedField = field.toLowerCase();
+
+        if (
+          !field ||
+          normalizedField === "id" ||
+          normalizedField === "cilt_id" ||
+          normalizedField === "created_by" ||
+          normalizedField === "created_at" ||
+          normalizedField === "updated_at"
+        ) {
+          return null;
+        }
+
+        return {
+          field,
+          label: toPaperA3Label(field),
+          order_no: Number(row?.ORDINAL_POSITION) || index + 1,
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.error("Error fetching PAPER A3 master columns:", error);
+    logger.error(`Error fetching PAPER A3 master columns: ${error.message}`);
+    return [];
+  }
+}
+
 async function createMasterCILT(data) {
   try {
     const pool = await getPool();
@@ -46,6 +120,13 @@ async function getMasterCILT(id) {
 
 async function getAllMasterCILT(plant, line, machine, type) {
   try {
+    if (isPaperA3Type(type)) {
+      const paperA3Columns = await getPaperA3MasterColumns();
+      if (paperA3Columns.length > 0) {
+        return paperA3Columns;
+      }
+    }
+
     const pool = await getPool();
     const result = await pool
       .request()
