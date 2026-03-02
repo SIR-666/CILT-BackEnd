@@ -89,11 +89,11 @@ async function createFrom(data) {
 
       const insertGnrQuery = `
         INSERT INTO tb_CILT_gnr_master
-          (plant, line, machine, package_type, activity, frekuensi, status, good, need, reject)
+          (plant, line, machine, package_type, activity, frekuensi, status, good, need, reject, sort_order)
         OUTPUT inserted.id, inserted.plant, inserted.line, inserted.machine, inserted.package_type,
                inserted.activity, inserted.frekuensi, inserted.status, inserted.good, inserted.need,
-               inserted.reject
-        SELECT s.plant, @targetLine, s.machine, s.package_type, s.activity, s.frekuensi, s.status, s.good, s.need, s.reject
+               inserted.reject, inserted.sort_order
+        SELECT s.plant, @targetLine, s.machine, s.package_type, s.activity, s.frekuensi, s.status, s.good, s.need, s.reject, s.sort_order
         FROM tb_CILT_gnr_master s
         WHERE s.line = @lineRef
           AND s.package_type = @gnrType
@@ -106,7 +106,10 @@ async function createFrom(data) {
               AND x.package_type = s.package_type
               AND x.activity = s.activity
           )
-        ORDER BY s.id ASC
+        ORDER BY
+          CASE WHEN s.sort_order IS NULL THEN 1 ELSE 0 END ASC,
+          s.sort_order ASC,
+          s.id ASC
       `;
       gnrResult = await reqGnr.query(insertGnrQuery);
     }
@@ -124,11 +127,11 @@ async function createFrom(data) {
 
       const insertChecklistQuery = `
         INSERT INTO tb_CILT_checklist_master
-          (plant, line, machine, package_type, job_type, componen, standart, pic, duration, maintanance_interval)
+          (plant, line, machine, package_type, job_type, componen, standart, pic, duration, maintanance_interval, sort_order)
         OUTPUT inserted.id, inserted.plant, inserted.line, inserted.machine, inserted.package_type,
                inserted.job_type, inserted.componen, inserted.standart, inserted.pic, inserted.duration,
-               inserted.maintanance_interval
-        SELECT s.plant, @targetLine, s.machine, s.package_type, s.job_type, s.componen, s.standart, s.pic, s.duration, s.maintanance_interval
+               inserted.maintanance_interval, inserted.sort_order
+        SELECT s.plant, @targetLine, s.machine, s.package_type, s.job_type, s.componen, s.standart, s.pic, s.duration, s.maintanance_interval, s.sort_order
         FROM tb_CILT_checklist_master s
         WHERE s.line = @lineRef
           AND s.package_type = @checkType
@@ -142,7 +145,10 @@ async function createFrom(data) {
               AND x.job_type = s.job_type
               AND x.componen = s.componen
           )
-        ORDER BY s.id ASC
+        ORDER BY
+          CASE WHEN s.sort_order IS NULL THEN 1 ELSE 0 END ASC,
+          s.sort_order ASC,
+          s.id ASC
       `;
       checklistResult = await reqChecklist.query(insertChecklistQuery);
     }
