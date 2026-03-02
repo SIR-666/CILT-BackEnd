@@ -71,8 +71,12 @@ async function createCILT(order) {
         .input("product", order.product)
         .input("machine", order.machine)
         .input("batch", order.batch)
-        .input("remarks", order.remarks)
-        .input("inspectionData", JSON.stringify(order.inspectionData))
+        .input("remarks", sql.NVarChar(sql.MAX), order.remarks)
+        .input(
+          "inspectionData",
+          sql.NVarChar(sql.MAX),
+          JSON.stringify(order.inspectionData)
+        )
         .input("formOpenTime", order.formOpenTime)
         .input("submitTime", order.submitTime)
         .input("data1", order.data1)
@@ -113,8 +117,12 @@ async function createCILT(order) {
       .input("product", order.product)
       .input("machine", order.machine)
       .input("batch", order.batch)
-      .input("remarks", order.remarks)
-      .input("inspectionData", JSON.stringify(order.inspectionData))
+      .input("remarks", sql.NVarChar(sql.MAX), order.remarks)
+      .input(
+        "inspectionData",
+        sql.NVarChar(sql.MAX),
+        JSON.stringify(order.inspectionData)
+      )
       .input("formOpenTime", order.formOpenTime)
       .input("submitTime", order.submitTime)
       .input("data1", order.data1)
@@ -184,7 +192,11 @@ async function updateCILT(id, order) {
       .input("machine", sql.VarChar, order.machine)
       .input("batch", sql.VarChar, order.batch)
       .input("remarks", sql.NVarChar(sql.MAX), order.remarks)
-      .input("inspectionData", sql.NVarChar, JSON.stringify(order.inspectionData))
+      .input(
+        "inspectionData",
+        sql.NVarChar(sql.MAX),
+        JSON.stringify(order.inspectionData)
+      )
       .input("formOpenTime", order.formOpenTime)
       .input("submitTime", order.submitTime)
       .input("data1", sql.NVarChar, order.data1)

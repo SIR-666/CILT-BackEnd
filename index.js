@@ -4,7 +4,8 @@ const cors = require("cors");
 
 const app = express();
 const router = express.Router();
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(cors());
 app.use("/", router);
 
@@ -64,3 +65,11 @@ app.use("/", ciltPressureRoutes);
 
 const ciltCombiXGMasterRoutes = require("./routes/ciltCombiXGMasterRoutes");
 app.use("/", ciltCombiXGMasterRoutes);
+
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ message: "Request payload too large" });
+  }
+
+  return next(err);
+});
