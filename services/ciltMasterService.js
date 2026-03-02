@@ -66,8 +66,21 @@ function toPaperA3GroupLabel(section) {
 
 function toPaperA3InputType(field) {
   const normalized = String(field || "").toLowerCase();
+  const token = normalized.replace(/[^a-z0-9]/g, "");
   if (normalized.includes("jam")) return "time";
-  if (normalized.includes("kode")) return "text";
+  if (
+    token.includes("kondisi") ||
+    token.includes("splicing")
+  ) {
+    return "checkbox";
+  }
+  if (
+    token.includes("kode") ||
+    token.includes("label") ||
+    token.includes("qtylabel")
+  ) {
+    return "text";
+  }
   return "number";
 }
 
