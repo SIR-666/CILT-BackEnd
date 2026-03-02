@@ -55,6 +55,22 @@ exports.updateChecklist = async (req, res) => {
   }
 };
 
+exports.reorderChecklist = async (req, res) => {
+  try {
+    const items = Array.isArray(req.body) ? req.body : req.body?.items;
+    const result = await masterChecklistService.reorderChecklist(items);
+    return res.status(200).json({
+      success: true,
+      message: "Checklist reordered",
+      rowsAffected: result.rowsAffected,
+      data: result.updated,
+    });
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.disableChecklist = async (req, res) => {
   try {
     const id = req.params.id;

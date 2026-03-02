@@ -47,6 +47,17 @@ exports.updateGNR = async (req, res) => {
   }
 };
 
+exports.reorderGNR = async (req, res) => {
+  try {
+    const items = Array.isArray(req.body) ? req.body : req.body?.items;
+    const result = await masterGnrService.reorderGNR(items);
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
+  }
+};
+
 exports.disabledGNR = async (req, res) => {
   try {
     const id = req.params.id;
