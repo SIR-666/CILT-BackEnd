@@ -37,20 +37,24 @@ async function createCILT(order) {
     const checkResult = await pool
       .request()
       .input("processOrder", order.processOrder)
+      .input("packageType", order.packageType)
       .input("plant", order.plant)
       .input("line", order.line)
       .input("shift", order.shift)
       .input("machine", order.machine)
+      .input("product", sql.NVarChar, order.product || "")
       .input("dateOnly", sql.DateTime, order.date ? new Date(order.date) : null)
       .query(`
         SELECT TOP 1 id 
         FROM tb_CILT 
         WHERE processOrder = @processOrder
+          AND packageType = @packageType
           AND packageType != 'PERFORMA RED AND GREEN'
           AND plant   = @plant
           AND line    = @line
           AND shift   = @shift
           AND machine = @machine
+          AND (@product = '' OR ISNULL(product, '') = @product)
           AND CAST(date AS DATE) = CAST(@dateOnly AS DATE)
       `);
 
@@ -340,7 +344,10 @@ async function getSKU(filter) {
 async function checkCiltByProcessOrder(processOrder, filters = {}) {
   try {
     const pool = await getPool();
-    const request = pool.request().input("processOrder", sql.VarChar, processOrder);
+    const request = pool
+      .request()
+      .input("processOrder", sql.VarChar, processOrder)
+      .input("product", sql.NVarChar, filters.product || "");
     let query = `
       SELECT TOP 1 *
       FROM tb_CILT
@@ -367,6 +374,7 @@ async function checkCiltByProcessOrder(processOrder, filters = {}) {
       query += " AND shift = @shift";
       request.input("shift", sql.VarChar, filters.shift);
     }
+    query += " AND (@product = '' OR ISNULL(product, '') = @product)";
 
     query += " ORDER BY ISNULL(updatedAt, submitTime) DESC, id DESC";
 
