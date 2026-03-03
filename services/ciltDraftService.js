@@ -24,7 +24,7 @@ function hasMeaningfulData(inspectionData) {
     return inspection.length > 0;
 }
 
-// Auto-save draft (insert/update by processOrder + packageType + product)
+// Auto-save draft (insert/update by processOrder + packageType)
 async function autoSaveDraft(data) {
     const pool = await getPool();
 
@@ -74,14 +74,13 @@ async function autoSaveDraft(data) {
         console.log(`[autoSaveDraft] Draft ID ${data.id} not found, fallback to upsert by context`);
     }
 
-    // Check if draft exists by processOrder + packageType + product
+    // Check if draft exists by processOrder + packageType
     const check = await pool.request()
         .input("processOrder", sql.NVarChar, data.processOrder)
         .input("packageType", sql.NVarChar, data.packageType)
         .input("line", sql.NVarChar, data.line)
         .input("machine", sql.NVarChar, data.machine)
         .input("currentShift", sql.NVarChar, data.shift)
-        .input("product", sql.NVarChar, data.product || "")
         .query(`
             SELECT TOP 1 id, currentShift, sourceShift
             FROM tb_CILT_DRAFT
@@ -90,7 +89,6 @@ async function autoSaveDraft(data) {
               AND line = @line
               AND machine = @machine
               AND currentShift = @currentShift
-              AND (@product = '' OR ISNULL(product, '') = @product)
         `);
 
     // UPDATE existing draft
