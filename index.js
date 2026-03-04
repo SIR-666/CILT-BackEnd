@@ -57,6 +57,9 @@ app.use("/custom/plants", ciltCustomPlantRoutes);
 const ciltCustomMachineRoutes = require("./routes/ciltCustomMachineRoutes");
 app.use("/custom/machines", ciltCustomMachineRoutes);
 
+const ciltHeaderFormMasterRoutes = require("./routes/ciltHeaderFormMasterRoutes");
+app.use("/header-form", ciltHeaderFormMasterRoutes);
+
 const ciltCustomMetadataRoutes = require("./routes/ciltCustomRoutes");
 app.use("/custom", ciltCustomMetadataRoutes);
 
