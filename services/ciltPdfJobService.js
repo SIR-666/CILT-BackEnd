@@ -38,6 +38,26 @@ const BASE_BROWSER_ARGS = [
   "--disable-renderer-backgrounding",
   "--disable-extensions",
 ];
+const PRINT_BASE_URL = String(
+  process.env.CILT_PDF_PRINT_BASE_URL || "http://localhost:3000"
+).trim();
+const PRINT_ROUTE_PATH = `/${String(
+  process.env.CILT_PDF_PRINT_ROUTE_PATH || "ciltApproval/print-job"
+)
+  .trim()
+  .replace(/^\/+|\/+$/g, "")}`;
+const SYSTEM_BROWSER_PATH_CANDIDATES = [
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chrome",
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/opt/google/chrome/chrome",
+  "/usr/bin/microsoft-edge",
+  "/usr/bin/msedge",
+  "/usr/bin/brave-browser",
+  "/snap/bin/chromium",
+];
 
 const jobs = new Map();
 let cleanupTimer = null;
@@ -65,6 +85,8 @@ const createJobId = () => {
   return crypto.randomBytes(16).toString("hex");
 };
 
+const createJobToken = () => crypto.randomBytes(24).toString("hex");
+
 const toPublicJob = (job) => ({
   jobId: job.jobId,
   status: job.status,
@@ -90,64 +112,48 @@ const ensureDir = async (dirPath) => {
 const stripScriptTags = (input) =>
   String(input || "").replace(/<script[\s\S]*?<\/script>/gi, "");
 
-const buildPrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
-  const pageRules = Object.values(PAGE_SIZE_CONFIG)
-    .map((entry) => `@page ${entry.pageName} { size: ${entry.cssSize}; margin: 0; }`)
-    .join("\n");
+const sanitizeSheets = (sheets = []) =>
+  (Array.isArray(sheets) ? sheets : []).map((sheet) => ({
+    ...sheet,
+    pageSize: normalizePageSize(sheet?.pageSize),
+    html: stripScriptTags(sheet?.html || ""),
+  }));
 
-  const sheetMarkup = sheets
-    .map((sheet) => {
-      const sizeKey = normalizePageSize(sheet?.pageSize);
-      const pageName = PAGE_SIZE_CONFIG[sizeKey].pageName;
-      const rawHtml = stripScriptTags(sheet?.html || "").trim();
-      if (!rawHtml) return "";
+const parseNonNegativeInt = (value, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.floor(parsed));
+};
 
-      if (/class=["'][^"']*cilt-print-sheet[^"']*["']/i.test(rawHtml)) {
-        return rawHtml;
-      }
+const parsePositiveInt = (value, fallback = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.floor(parsed));
+};
 
-      return `<section class="cilt-print-sheet" data-page-size="${sizeKey}" style="page: ${pageName};">${rawHtml}</section>`;
-    })
-    .filter(Boolean)
-    .join("\n");
+const resolveSliceWindow = (total = 0, { offset, limit } = {}) => {
+  const normalizedTotal = Math.max(0, Number(total) || 0);
+  const safeOffset = Math.min(parseNonNegativeInt(offset, 0), normalizedTotal);
+  const safeLimit = Math.min(parsePositiveInt(limit, normalizedTotal || 1), normalizedTotal || 1);
+  return {
+    offset: safeOffset,
+    limit: safeLimit,
+    end: Math.min(normalizedTotal, safeOffset + safeLimit),
+  };
+};
 
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CILT PDF Job</title>
-    <style>
-      ${pageRules}
-      body {
-        margin: 0;
-        padding: 0;
-        background: #fff;
-        color: #111827;
-        font-family: Arial, Helvetica, sans-serif;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
-      .cilt-print-sheet {
-        width: 100%;
-        box-sizing: border-box;
-        break-after: page;
-        page-break-after: always;
-      }
-      .cilt-print-sheet:last-child {
-        break-after: auto;
-        page-break-after: auto;
-      }
-      .cilt-print-sheet * {
-        box-sizing: border-box;
-      }
-      ${String(extraStyles || "")}
-    </style>
-  </head>
-  <body>
-    ${sheetMarkup}
-  </body>
-</html>`;
+const buildPrintRouteUrl = ({ job, offset = 0, limit = 1 }) => {
+  if (!PRINT_BASE_URL) {
+    throw new Error("CILT_PDF_PRINT_BASE_URL is not configured.");
+  }
+  const normalizedBase = PRINT_BASE_URL.replace(/\/+$/g, "");
+  const url = new URL(`${normalizedBase}${PRINT_ROUTE_PATH}`);
+  url.searchParams.set("jobId", job.jobId);
+  url.searchParams.set("token", job.printToken);
+  url.searchParams.set("offset", String(offset));
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("ts", String(Date.now()));
+  return url.toString();
 };
 
 const getPlaywrightChromium = () => {
@@ -179,6 +185,10 @@ const sanitizeJobErrorMessage = (error) => {
     return "Browser launch failed on server. Run `npx playwright install --with-deps chromium` and set CILT_PDF_BROWSER_CHANNEL=chromium.";
   }
 
+  if (lower.includes("print route")) {
+    return "Print route render failed. Check CILT_PDF_PRINT_BASE_URL and FE route /ciltApproval/print-job.";
+  }
+
   if (lower.includes("timeout")) {
     return "PDF generation timed out on server. Try fewer packages or lower CILT_PDF_SHEETS_PER_CHUNK.";
   }
@@ -188,43 +198,55 @@ const sanitizeJobErrorMessage = (error) => {
 
 const buildLaunchCandidates = () => {
   const candidates = [];
+  const seenLabels = new Set();
+  const pushCandidate = (label, options) => {
+    if (!label || seenLabels.has(label)) return;
+    seenLabels.add(label);
+    candidates.push({ label, options });
+  };
 
   if (BROWSER_EXECUTABLE_PATH) {
-    candidates.push({
-      label: `custom executable (${BROWSER_EXECUTABLE_PATH})`,
-      options: {
-        executablePath: BROWSER_EXECUTABLE_PATH,
-        headless: BROWSER_HEADLESS,
-        args: BASE_BROWSER_ARGS,
-      },
-    });
-  }
-
-  if (BROWSER_CHANNEL) {
-    candidates.push({
-      label: `channel (${BROWSER_CHANNEL})`,
-      options: {
-        channel: BROWSER_CHANNEL,
-        headless: BROWSER_HEADLESS,
-        args: BASE_BROWSER_ARGS,
-      },
-    });
-  }
-
-  candidates.push({
-    label: "playwright default",
-    options: {
+    pushCandidate(`custom executable (${BROWSER_EXECUTABLE_PATH})`, {
+      executablePath: BROWSER_EXECUTABLE_PATH,
       headless: BROWSER_HEADLESS,
       args: BASE_BROWSER_ARGS,
-    },
+    });
+  }
+
+  const systemBrowserCandidates = Array.from(
+    new Set(SYSTEM_BROWSER_PATH_CANDIDATES.filter((candidate) => fs.existsSync(candidate)))
+  );
+  for (const candidatePath of systemBrowserCandidates) {
+    pushCandidate(`system executable (${candidatePath})`, {
+      executablePath: candidatePath,
+      headless: BROWSER_HEADLESS,
+      args: BASE_BROWSER_ARGS,
+    });
+  }
+
+  const channelCandidates = Array.from(
+    new Set([BROWSER_CHANNEL, "chromium", "chrome"].filter(Boolean))
+  );
+  for (const channel of channelCandidates) {
+    pushCandidate(`channel (${channel})`, {
+      channel,
+      headless: BROWSER_HEADLESS,
+      args: BASE_BROWSER_ARGS,
+    });
+  }
+
+  pushCandidate("playwright default", {
+    headless: BROWSER_HEADLESS,
+    args: BASE_BROWSER_ARGS,
   });
 
-  candidates.push({
-    label: "playwright fallback single-process",
-    options: {
-      headless: BROWSER_HEADLESS,
-      args: [...BASE_BROWSER_ARGS, "--single-process", "--no-zygote"],
-    },
+  pushCandidate("playwright default (no custom args)", {
+    headless: BROWSER_HEADLESS,
+  });
+
+  pushCandidate("playwright fallback single-process", {
+    headless: BROWSER_HEADLESS,
+    args: [...BASE_BROWSER_ARGS, "--single-process", "--no-zygote"],
   });
 
   return candidates;
@@ -278,19 +300,42 @@ const ensureJobNotCancelled = (job) => {
 
 const renderSheetChunkToPdf = async ({
   page,
-  sheets = [],
-  extraStyles = "",
+  printRouteUrl,
   outputPath,
 }) => {
-  const html = buildPrintHtmlDocument({
-    sheets,
-    extraStyles,
-  });
-
-  await page.setContent(html, {
-    waitUntil: "domcontentloaded",
+  await page.goto(printRouteUrl, {
+    waitUntil: "networkidle",
     timeout: JOB_TIMEOUT_MS,
   });
+  await page.waitForSelector("[data-cilt-print-ready]", {
+    timeout: JOB_TIMEOUT_MS,
+  });
+  const readyState = await page.$eval(
+    "[data-cilt-print-ready]",
+    (node) => node.getAttribute("data-cilt-print-ready") || ""
+  );
+  if (readyState !== "1") {
+    let routeError = "";
+    try {
+      routeError = await page.$eval(
+        "[data-cilt-print-error]",
+        (node) => node.textContent || ""
+      );
+    } catch (error) {
+      routeError = "";
+    }
+    throw new Error(
+      `Print route render failed${routeError ? `: ${routeError.trim()}` : "."}`
+    );
+  }
+  try {
+    await page.waitForFunction(
+      () => (document.fonts ? document.fonts.status === "loaded" : true),
+      { timeout: JOB_TIMEOUT_MS }
+    );
+  } catch (error) {
+    // Continue even if font readiness check times out.
+  }
   await page.emulateMedia({ media: "print" });
 
   await page.pdf({
@@ -371,11 +416,17 @@ const runJob = async (jobId) => {
       ensureJobNotCancelled(job);
       const chunkSheets = sheetChunks[chunkIndex];
       const chunkNumber = chunkIndex + 1;
+      const chunkOffset = chunkIndex * chunkSize;
       const chunkPath = path.join(
         JOB_OUTPUT_DIR,
         `${job.jobId}.chunk-${String(chunkNumber).padStart(4, "0")}.pdf`
       );
       chunkOutputPaths.push(chunkPath);
+      const printRouteUrl = buildPrintRouteUrl({
+        job,
+        offset: chunkOffset,
+        limit: chunkSheets.length,
+      });
 
       const progressStart = 12 + Math.round((chunkIndex / sheetChunks.length) * 68);
       job.progress = Math.max(job.progress, progressStart);
@@ -386,8 +437,7 @@ const runJob = async (jobId) => {
 
       await renderSheetChunkToPdf({
         page,
-        sheets: chunkSheets,
-        extraStyles: job.extraStyles,
+        printRouteUrl,
         outputPath: chunkPath,
       });
 
@@ -411,6 +461,8 @@ const runJob = async (jobId) => {
     await mergePdfFiles(chunkOutputPaths, outputPath);
 
     const stats = await fs.promises.stat(outputPath);
+    job.sheets = [];
+    job.extraStyles = "";
     job.outputPath = outputPath;
     job.outputSize = stats.size;
     job.chunkOutputCount = chunkOutputPaths.length;
@@ -528,19 +580,21 @@ const createJob = ({ fileName, sheets, extraStyles = "", requestedBy, chunkSize 
 
   const jobId = createJobId();
   const resolvedChunkSize = normalizeChunkSize(chunkSize);
+  const sanitizedSheets = sanitizeSheets(sheets);
   const job = {
     jobId,
+    printToken: createJobToken(),
     status: "queued",
     progress: 0,
     message: "Job queued.",
     cancelRequested: false,
     fileName: sanitizeFileName(fileName, `cilt-export-${jobId}.pdf`),
     requestedBy: String(requestedBy || "").trim() || "unknown",
-    totalSheets: sheets.length,
+    totalSheets: sanitizedSheets.length,
     chunkSize: resolvedChunkSize,
-    totalChunks: Math.max(1, Math.ceil(sheets.length / resolvedChunkSize)),
+    totalChunks: Math.max(1, Math.ceil(sanitizedSheets.length / resolvedChunkSize)),
     processedChunks: 0,
-    sheets,
+    sheets: sanitizedSheets,
     extraStyles: String(extraStyles || ""),
     outputPath: null,
     outputSize: null,
@@ -561,6 +615,33 @@ const getJob = (jobId) => {
 };
 
 const getJobInternal = (jobId) => jobs.get(jobId);
+
+const getJobPrintPayload = (jobId, { token, offset, limit } = {}) => {
+  const job = jobs.get(jobId);
+  if (!job) {
+    return { ok: false, statusCode: 404, error: "PDF job not found." };
+  }
+  if (!token || token !== job.printToken) {
+    return { ok: false, statusCode: 403, error: "Invalid PDF print token." };
+  }
+  const sliceWindow = resolveSliceWindow(job.totalSheets, { offset, limit });
+  const slicedSheets = sanitizeSheets(job.sheets.slice(sliceWindow.offset, sliceWindow.end));
+  return {
+    ok: true,
+    payload: {
+      jobId: job.jobId,
+      fileName: job.fileName,
+      requestedBy: job.requestedBy,
+      status: job.status,
+      totalSheets: job.totalSheets,
+      offset: sliceWindow.offset,
+      limit: sliceWindow.limit,
+      end: sliceWindow.end,
+      extraStyles: String(job.extraStyles || ""),
+      sheets: slicedSheets,
+    },
+  };
+};
 
 const cancelJob = (jobId) => {
   const job = jobs.get(jobId);
@@ -614,6 +695,7 @@ module.exports = {
   createJob,
   getJob,
   getJobInternal,
+  getJobPrintPayload,
   cancelJob,
   removeJob,
   ensureCleanupLoop,

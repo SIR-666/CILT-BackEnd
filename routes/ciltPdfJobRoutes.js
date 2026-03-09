@@ -42,6 +42,23 @@ router.get("/:jobId", (req, res) => {
   return res.status(200).json(job);
 });
 
+router.get("/:jobId/print-data", (req, res) => {
+  const { jobId } = req.params;
+  const { token, offset, limit } = req.query || {};
+  const result = ciltPdfJobService.getJobPrintPayload(jobId, {
+    token: String(token || ""),
+    offset,
+    limit,
+  });
+  if (!result?.ok) {
+    return res.status(Number(result?.statusCode) || 400).json({
+      error: result?.error || "Failed to load print data.",
+    });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(200).json(result.payload);
+});
+
 router.get("/:jobId/download", (req, res) => {
   const { jobId } = req.params;
   const job = ciltPdfJobService.getJobInternal(jobId);
@@ -82,4 +99,3 @@ router.delete("/:jobId", async (req, res) => {
 });
 
 module.exports = router;
-
