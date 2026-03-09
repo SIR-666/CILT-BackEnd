@@ -4,8 +4,9 @@ const cors = require("cors");
 
 const app = express();
 const router = express.Router();
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+const REQUEST_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "80mb";
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 app.use(cors());
 app.use("/", router);
 
@@ -23,6 +24,8 @@ app.listen(PORT, () => {
 
 const ciltRoutes = require("./routes/ciltRoutes");
 app.use("/cilt", ciltRoutes);
+const ciltPdfJobRoutes = require("./routes/ciltPdfJobRoutes");
+app.use("/cilt/pdf-jobs", ciltPdfJobRoutes);
 
 const ciltDraftRoutes = require("./routes/ciltDraftRoutes");
 app.use("/draft", ciltDraftRoutes);

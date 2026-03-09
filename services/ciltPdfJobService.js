@@ -1,0 +1,510 @@
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const { PDFDocument } = require("pdf-lib");
+
+const PAGE_SIZE_CONFIG = {
+  "A4 portrait": { pageName: "cilt-a4-portrait", cssSize: "A4 portrait" },
+  "A4 landscape": { pageName: "cilt-a4-landscape", cssSize: "A4 landscape" },
+  "A3 landscape": { pageName: "cilt-a3-landscape", cssSize: "A3 landscape" },
+};
+
+const DEFAULT_PAGE_SIZE = "A4 portrait";
+const JOB_OUTPUT_DIR = path.join(__dirname, "..", "tmp", "cilt-pdf-jobs");
+const JOB_TTL_MS = Number(process.env.CILT_PDF_JOB_TTL_MS || 60 * 60 * 1000);
+const JOB_CLEANUP_INTERVAL_MS = Number(
+  process.env.CILT_PDF_JOB_CLEANUP_INTERVAL_MS || 5 * 60 * 1000
+);
+const JOB_TIMEOUT_MS = Number(process.env.CILT_PDF_JOB_TIMEOUT_MS || 10 * 60 * 1000);
+const MAX_SHEET_COUNT = Number(process.env.CILT_PDF_MAX_SHEETS || 500);
+const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24);
+const MAX_HTML_PAYLOAD_CHARS = Number(
+  process.env.CILT_PDF_MAX_HTML_CHARS || 20_000_000
+);
+
+const jobs = new Map();
+let cleanupTimer = null;
+
+const nowIso = () => new Date().toISOString();
+
+const normalizePageSize = (value) =>
+  PAGE_SIZE_CONFIG[value] ? value : DEFAULT_PAGE_SIZE;
+
+const sanitizeFileName = (value, fallback = "cilt-export.pdf") => {
+  const base = String(value || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const withExt = base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+  return withExt || fallback;
+};
+
+const createJobId = () => {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return crypto.randomBytes(16).toString("hex");
+};
+
+const toPublicJob = (job) => ({
+  jobId: job.jobId,
+  status: job.status,
+  progress: job.progress,
+  message: job.message,
+  cancelRequested: Boolean(job.cancelRequested),
+  fileName: job.fileName,
+  requestedBy: job.requestedBy,
+  totalSheets: job.totalSheets,
+  chunkSize: job.chunkSize || null,
+  totalChunks: job.totalChunks || null,
+  processedChunks: job.processedChunks || 0,
+  createdAt: job.createdAt,
+  startedAt: job.startedAt || null,
+  completedAt: job.completedAt || null,
+  error: job.error || null,
+});
+
+const ensureDir = async (dirPath) => {
+  await fs.promises.mkdir(dirPath, { recursive: true });
+};
+
+const stripScriptTags = (input) =>
+  String(input || "").replace(/<script[\s\S]*?<\/script>/gi, "");
+
+const buildPrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
+  const pageRules = Object.values(PAGE_SIZE_CONFIG)
+    .map((entry) => `@page ${entry.pageName} { size: ${entry.cssSize}; margin: 0; }`)
+    .join("\n");
+
+  const sheetMarkup = sheets
+    .map((sheet) => {
+      const sizeKey = normalizePageSize(sheet?.pageSize);
+      const pageName = PAGE_SIZE_CONFIG[sizeKey].pageName;
+      const rawHtml = stripScriptTags(sheet?.html || "").trim();
+      if (!rawHtml) return "";
+
+      if (/class=["'][^"']*cilt-print-sheet[^"']*["']/i.test(rawHtml)) {
+        return rawHtml;
+      }
+
+      return `<section class="cilt-print-sheet" data-page-size="${sizeKey}" style="page: ${pageName};">${rawHtml}</section>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CILT PDF Job</title>
+    <style>
+      ${pageRules}
+      body {
+        margin: 0;
+        padding: 0;
+        background: #fff;
+        color: #111827;
+        font-family: Arial, Helvetica, sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .cilt-print-sheet {
+        width: 100%;
+        box-sizing: border-box;
+        break-after: page;
+        page-break-after: always;
+      }
+      .cilt-print-sheet:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+      .cilt-print-sheet * {
+        box-sizing: border-box;
+      }
+      ${String(extraStyles || "")}
+    </style>
+  </head>
+  <body>
+    ${sheetMarkup}
+  </body>
+</html>`;
+};
+
+const getPlaywrightChromium = () => {
+  try {
+    // eslint-disable-next-line global-require
+    const playwright = require("playwright");
+    return playwright?.chromium || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const splitIntoChunks = (items = [], chunkSize = MAX_SHEETS_PER_CHUNK) => {
+  const normalizedChunkSize = Math.max(1, Number(chunkSize) || MAX_SHEETS_PER_CHUNK);
+  const chunks = [];
+  for (let index = 0; index < items.length; index += normalizedChunkSize) {
+    chunks.push(items.slice(index, index + normalizedChunkSize));
+  }
+  return chunks;
+};
+
+const createCancelError = () => {
+  const error = new Error("PDF job cancelled.");
+  error.code = "PDF_JOB_CANCELLED";
+  return error;
+};
+
+const ensureJobNotCancelled = (job) => {
+  if (!job) throw createCancelError();
+  const statusToken = String(job.status || "").toLowerCase();
+  if (job.cancelRequested || statusToken === "cancelled") {
+    throw createCancelError();
+  }
+};
+
+const renderSheetChunkToPdf = async ({
+  page,
+  sheets = [],
+  extraStyles = "",
+  outputPath,
+}) => {
+  const html = buildPrintHtmlDocument({
+    sheets,
+    extraStyles,
+  });
+
+  await page.setContent(html, {
+    waitUntil: "domcontentloaded",
+    timeout: JOB_TIMEOUT_MS,
+  });
+  await page.emulateMedia({ media: "print" });
+
+  await page.pdf({
+    path: outputPath,
+    printBackground: true,
+    preferCSSPageSize: true,
+    margin: { top: "0mm", right: "0mm", bottom: "0mm", left: "0mm" },
+    timeout: JOB_TIMEOUT_MS,
+  });
+};
+
+const mergePdfFiles = async (chunkPaths = [], outputPath) => {
+  if (!Array.isArray(chunkPaths) || chunkPaths.length === 0) {
+    throw new Error("No chunk PDFs to merge.");
+  }
+  if (chunkPaths.length === 1) {
+    await fs.promises.rename(chunkPaths[0], outputPath);
+    return;
+  }
+
+  const mergedPdf = await PDFDocument.create();
+  for (const chunkPath of chunkPaths) {
+    const bytes = await fs.promises.readFile(chunkPath);
+    const sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const pageIndices = sourcePdf.getPageIndices();
+    const copiedPages = await mergedPdf.copyPages(sourcePdf, pageIndices);
+    copiedPages.forEach((copiedPage) => mergedPdf.addPage(copiedPage));
+  }
+  const mergedBytes = await mergedPdf.save({ useObjectStreams: false });
+  await fs.promises.writeFile(outputPath, mergedBytes);
+};
+
+const runJob = async (jobId) => {
+  const job = jobs.get(jobId);
+  if (!job || job.status !== "queued") return;
+
+  let browser = null;
+  let context = null;
+  const chunkOutputPaths = [];
+  try {
+    ensureJobNotCancelled(job);
+    job.status = "processing";
+    job.progress = 5;
+    job.startedAt = nowIso();
+    job.message = "Preparing renderer...";
+
+    const chromium = getPlaywrightChromium();
+    if (!chromium) {
+      throw new Error(
+        "Playwright is not installed in backend. Install dependency 'playwright'."
+      );
+    }
+
+    await ensureDir(JOB_OUTPUT_DIR);
+
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 1,
+    });
+    const page = await context.newPage();
+
+    const chunkSize = Math.max(
+      1,
+      Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, 100)
+    );
+    const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
+    job.chunkSize = chunkSize;
+    job.totalChunks = sheetChunks.length;
+    job.processedChunks = 0;
+    job.progress = 12;
+    job.message =
+      sheetChunks.length > 1
+        ? `Chunking ${job.totalSheets} sheets into ${sheetChunks.length} parts...`
+        : "Rendering PDF pages...";
+
+    for (let chunkIndex = 0; chunkIndex < sheetChunks.length; chunkIndex += 1) {
+      ensureJobNotCancelled(job);
+      const chunkSheets = sheetChunks[chunkIndex];
+      const chunkNumber = chunkIndex + 1;
+      const chunkPath = path.join(
+        JOB_OUTPUT_DIR,
+        `${job.jobId}.chunk-${String(chunkNumber).padStart(4, "0")}.pdf`
+      );
+      chunkOutputPaths.push(chunkPath);
+
+      const progressStart = 12 + Math.round((chunkIndex / sheetChunks.length) * 68);
+      job.progress = Math.max(job.progress, progressStart);
+      job.message =
+        sheetChunks.length > 1
+          ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
+          : "Rendering PDF pages...";
+
+      await renderSheetChunkToPdf({
+        page,
+        sheets: chunkSheets,
+        extraStyles: job.extraStyles,
+        outputPath: chunkPath,
+      });
+
+      job.processedChunks = chunkNumber;
+      const progressEnd = 12 + Math.round((chunkNumber / sheetChunks.length) * 68);
+      job.progress = Math.max(job.progress, progressEnd);
+      job.message =
+        sheetChunks.length > 1
+          ? `Chunk ${chunkNumber}/${sheetChunks.length} completed.`
+          : "PDF pages rendered.";
+    }
+
+    ensureJobNotCancelled(job);
+    job.progress = Math.max(job.progress, 85);
+    job.message =
+      chunkOutputPaths.length > 1
+        ? `Merging ${chunkOutputPaths.length} chunk files...`
+        : "Finalizing PDF file...";
+
+    const outputPath = path.join(JOB_OUTPUT_DIR, `${job.jobId}.pdf`);
+    await mergePdfFiles(chunkOutputPaths, outputPath);
+
+    const stats = await fs.promises.stat(outputPath);
+    job.outputPath = outputPath;
+    job.outputSize = stats.size;
+    job.chunkOutputCount = chunkOutputPaths.length;
+    job.status = "completed";
+    job.progress = 100;
+    job.message = "PDF is ready.";
+    job.completedAt = nowIso();
+    job.error = null;
+  } catch (error) {
+    if (error?.code === "PDF_JOB_CANCELLED" || job?.cancelRequested) {
+      job.status = "cancelled";
+      job.progress = 100;
+      job.message = "PDF job cancelled.";
+      job.completedAt = nowIso();
+      job.error = null;
+    } else {
+      job.status = "failed";
+      job.progress = 100;
+      job.message = "Failed to generate PDF.";
+      job.completedAt = nowIso();
+      job.error = String(error?.message || error || "Unknown error");
+      // eslint-disable-next-line no-console
+      console.error(`CILT PDF Job failed (${jobId}): ${job.error}`);
+    }
+  } finally {
+    for (const chunkPath of chunkOutputPaths) {
+      try {
+        await fs.promises.unlink(chunkPath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          // eslint-disable-next-line no-console
+          console.error(`CILT PDF temp cleanup error (${jobId}): ${error.message}`);
+        }
+      }
+    }
+    if (context) {
+      try {
+        await context.close();
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error(`CILT PDF context close error (${jobId}): ${error.message}`);
+      }
+    }
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error(`CILT PDF browser close error (${jobId}): ${error.message}`);
+      }
+    }
+  }
+};
+
+const cleanupExpiredJobs = async () => {
+  const now = Date.now();
+  for (const [jobId, job] of jobs.entries()) {
+    const isTerminal =
+      job.status === "completed" ||
+      job.status === "failed" ||
+      job.status === "cancelled";
+    if (!isTerminal) continue;
+    const endTs = new Date(job.completedAt || job.createdAt).getTime();
+    if (!Number.isFinite(endTs)) continue;
+    if (now - endTs < JOB_TTL_MS) continue;
+
+    if (job.outputPath) {
+      try {
+        await fs.promises.unlink(job.outputPath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          // eslint-disable-next-line no-console
+          console.error(`CILT PDF cleanup file error (${jobId}): ${error.message}`);
+        }
+      }
+    }
+    jobs.delete(jobId);
+  }
+};
+
+const validateSheetsPayload = (sheets) => {
+  if (!Array.isArray(sheets) || sheets.length === 0) {
+    return "sheets is required and must be a non-empty array.";
+  }
+  if (sheets.length > MAX_SHEET_COUNT) {
+    return `Too many sheets. Max allowed is ${MAX_SHEET_COUNT}.`;
+  }
+  let totalChars = 0;
+  for (const sheet of sheets) {
+    totalChars += String(sheet?.html || "").length;
+    if (totalChars > MAX_HTML_PAYLOAD_CHARS) {
+      return `HTML payload too large. Max allowed chars is ${MAX_HTML_PAYLOAD_CHARS}.`;
+    }
+  }
+  return null;
+};
+
+const normalizeChunkSize = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return MAX_SHEETS_PER_CHUNK;
+  return Math.max(1, Math.min(Math.floor(parsed), 100));
+};
+
+const createJob = ({ fileName, sheets, extraStyles = "", requestedBy, chunkSize }) => {
+  const validationError = validateSheetsPayload(sheets);
+  if (validationError) {
+    const error = new Error(validationError);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const jobId = createJobId();
+  const resolvedChunkSize = normalizeChunkSize(chunkSize);
+  const job = {
+    jobId,
+    status: "queued",
+    progress: 0,
+    message: "Job queued.",
+    cancelRequested: false,
+    fileName: sanitizeFileName(fileName, `cilt-export-${jobId}.pdf`),
+    requestedBy: String(requestedBy || "").trim() || "unknown",
+    totalSheets: sheets.length,
+    chunkSize: resolvedChunkSize,
+    totalChunks: Math.max(1, Math.ceil(sheets.length / resolvedChunkSize)),
+    processedChunks: 0,
+    sheets,
+    extraStyles: String(extraStyles || ""),
+    outputPath: null,
+    outputSize: null,
+    createdAt: nowIso(),
+    startedAt: null,
+    completedAt: null,
+    error: null,
+  };
+
+  jobs.set(jobId, job);
+  setImmediate(() => runJob(jobId));
+  return toPublicJob(job);
+};
+
+const getJob = (jobId) => {
+  const job = jobs.get(jobId);
+  return job ? toPublicJob(job) : null;
+};
+
+const getJobInternal = (jobId) => jobs.get(jobId);
+
+const cancelJob = (jobId) => {
+  const job = jobs.get(jobId);
+  if (!job) return null;
+
+  const statusToken = String(job.status || "").toLowerCase();
+  if (statusToken === "completed" || statusToken === "failed" || statusToken === "cancelled") {
+    return toPublicJob(job);
+  }
+
+  job.cancelRequested = true;
+  if (statusToken === "queued") {
+    job.status = "cancelled";
+    job.progress = 100;
+    job.message = "PDF job cancelled before processing.";
+    job.completedAt = nowIso();
+  } else {
+    job.message = "Cancellation requested. Finishing current step...";
+  }
+  return toPublicJob(job);
+};
+
+const removeJob = async (jobId) => {
+  const job = jobs.get(jobId);
+  if (!job) return false;
+  if (job.outputPath) {
+    try {
+      await fs.promises.unlink(job.outputPath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        // eslint-disable-next-line no-console
+        console.error(`CILT PDF remove file error (${jobId}): ${error.message}`);
+      }
+    }
+  }
+  jobs.delete(jobId);
+  return true;
+};
+
+const ensureCleanupLoop = () => {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    cleanupExpiredJobs().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error(`CILT PDF cleanup loop error: ${error.message}`);
+    });
+  }, JOB_CLEANUP_INTERVAL_MS);
+};
+
+module.exports = {
+  createJob,
+  getJob,
+  getJobInternal,
+  cancelJob,
+  removeJob,
+  ensureCleanupLoop,
+};
+
