@@ -21,6 +21,23 @@ const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24)
 const MAX_HTML_PAYLOAD_CHARS = Number(
   process.env.CILT_PDF_MAX_HTML_CHARS || 20_000_000
 );
+const BROWSER_CHANNEL = String(process.env.CILT_PDF_BROWSER_CHANNEL || "").trim();
+const BROWSER_EXECUTABLE_PATH = String(
+  process.env.CILT_PDF_BROWSER_EXECUTABLE_PATH || ""
+).trim();
+const BROWSER_HEADLESS =
+  String(process.env.CILT_PDF_BROWSER_HEADLESS || "true").toLowerCase() !==
+  "false";
+const BASE_BROWSER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-renderer-backgrounding",
+  "--disable-extensions",
+];
 
 const jobs = new Map();
 let cleanupTimer = null;
@@ -143,6 +160,99 @@ const getPlaywrightChromium = () => {
   }
 };
 
+const compactErrorMessage = (error) =>
+  String(error?.message || error || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const sanitizeJobErrorMessage = (error) => {
+  const message = compactErrorMessage(error);
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("browsertype.launch") ||
+    lower.includes("target page, context or browser has been closed") ||
+    lower.includes("failed to launch") ||
+    lower.includes("executable doesn't exist") ||
+    lower.includes("error while loading shared libraries")
+  ) {
+    return "Browser launch failed on server. Run `npx playwright install --with-deps chromium` and set CILT_PDF_BROWSER_CHANNEL=chromium.";
+  }
+
+  if (lower.includes("timeout")) {
+    return "PDF generation timed out on server. Try fewer packages or lower CILT_PDF_SHEETS_PER_CHUNK.";
+  }
+
+  return message || "Unknown error";
+};
+
+const buildLaunchCandidates = () => {
+  const candidates = [];
+
+  if (BROWSER_EXECUTABLE_PATH) {
+    candidates.push({
+      label: `custom executable (${BROWSER_EXECUTABLE_PATH})`,
+      options: {
+        executablePath: BROWSER_EXECUTABLE_PATH,
+        headless: BROWSER_HEADLESS,
+        args: BASE_BROWSER_ARGS,
+      },
+    });
+  }
+
+  if (BROWSER_CHANNEL) {
+    candidates.push({
+      label: `channel (${BROWSER_CHANNEL})`,
+      options: {
+        channel: BROWSER_CHANNEL,
+        headless: BROWSER_HEADLESS,
+        args: BASE_BROWSER_ARGS,
+      },
+    });
+  }
+
+  candidates.push({
+    label: "playwright default",
+    options: {
+      headless: BROWSER_HEADLESS,
+      args: BASE_BROWSER_ARGS,
+    },
+  });
+
+  candidates.push({
+    label: "playwright fallback single-process",
+    options: {
+      headless: BROWSER_HEADLESS,
+      args: [...BASE_BROWSER_ARGS, "--single-process", "--no-zygote"],
+    },
+  });
+
+  return candidates;
+};
+
+const launchBrowserWithFallback = async (chromium) => {
+  const candidates = buildLaunchCandidates();
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      // eslint-disable-next-line no-console
+      console.log(`[CILT PDF] Launching browser via ${candidate.label}`);
+      return await chromium.launch(candidate.options);
+    } catch (error) {
+      lastError = error;
+      // eslint-disable-next-line no-console
+      console.error(
+        `[CILT PDF] Browser launch failed via ${candidate.label}: ${compactErrorMessage(
+          error
+        )}`
+      );
+    }
+  }
+
+  throw lastError || new Error("Unable to launch browser.");
+};
+
 const splitIntoChunks = (items = [], chunkSize = MAX_SHEETS_PER_CHUNK) => {
   const normalizedChunkSize = Math.max(1, Number(chunkSize) || MAX_SHEETS_PER_CHUNK);
   const chunks = [];
@@ -236,10 +346,7 @@ const runJob = async (jobId) => {
 
     await ensureDir(JOB_OUTPUT_DIR);
 
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    });
+    browser = await launchBrowserWithFallback(chromium);
     context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
@@ -324,9 +431,13 @@ const runJob = async (jobId) => {
       job.progress = 100;
       job.message = "Failed to generate PDF.";
       job.completedAt = nowIso();
-      job.error = String(error?.message || error || "Unknown error");
+      job.error = sanitizeJobErrorMessage(error);
       // eslint-disable-next-line no-console
-      console.error(`CILT PDF Job failed (${jobId}): ${job.error}`);
+      console.error(
+        `CILT PDF Job failed (${jobId}): ${job.error} | raw=${compactErrorMessage(
+          error
+        )}`
+      );
     }
   } finally {
     for (const chunkPath of chunkOutputPaths) {
@@ -507,4 +618,3 @@ module.exports = {
   removeJob,
   ensureCleanupLoop,
 };
-
