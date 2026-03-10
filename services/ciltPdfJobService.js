@@ -47,7 +47,7 @@ const PRINT_ROUTE_PATH = `/${String(
   .trim()
   .replace(/^\/+|\/+$/g, "")}`;
 const PRINT_READY_TIMEOUT_MS = Number(
-  process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 15 * 1000
+  process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 45 * 1000
 );
 const PRINT_FONT_WAIT_TIMEOUT_MS = Number(
   process.env.CILT_PDF_PRINT_FONT_WAIT_TIMEOUT_MS || 2500
@@ -345,7 +345,9 @@ const normalizePathname = (urlValue) => {
 
 const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
   const pageRules = Object.values(PAGE_SIZE_CONFIG)
-    .map((entry) => `@page ${entry.pageName} { size: ${entry.cssSize}; margin: 0; }`)
+    .map(
+      (entry) => `@page ${entry.pageName} { size: ${entry.cssSize}; margin: 2.5mm; }`
+    )
     .join("\n");
 
   const sheetMarkup = (Array.isArray(sheets) ? sheets : [])
@@ -375,6 +377,8 @@ const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
         padding: 0;
         background: #fff;
         color: #111827;
+        font-family: Arial, sans-serif;
+        line-height: 1.25;
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
       }
