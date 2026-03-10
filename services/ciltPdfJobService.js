@@ -196,6 +196,10 @@ const sanitizeJobErrorMessage = (error) => {
   }
 
   if (lower.includes("timeout")) {
+    const stageMatch = message.match(/\[stage:([^\]]+)\]/i);
+    if (stageMatch?.[1]) {
+      return `PDF generation timed out on server at stage '${stageMatch[1]}'.`;
+    }
     return "PDF generation timed out on server. Try fewer packages or lower CILT_PDF_SHEETS_PER_CHUNK.";
   }
 
@@ -305,6 +309,11 @@ const ensureJobNotCancelled = (job) => {
 };
 
 const formatMs = (value) => `${Math.max(0, Math.round(Number(value) || 0))}ms`;
+const withStageError = (stage, error) => {
+  const wrapped = new Error(`[stage:${stage}] ${compactErrorMessage(error)}`);
+  wrapped.stage = stage;
+  return wrapped;
+};
 
 const renderSheetChunkToPdf = async ({
   page,
@@ -312,14 +321,22 @@ const renderSheetChunkToPdf = async ({
   outputPath,
 }) => {
   const startedAt = Date.now();
-  await page.goto(printRouteUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: PRINT_READY_TIMEOUT_MS,
-  });
+  try {
+    await page.goto(printRouteUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: PRINT_READY_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw withStageError("goto-print-route", error);
+  }
   const gotoDoneAt = Date.now();
-  await page.waitForSelector("[data-cilt-print-ready]", {
-    timeout: PRINT_READY_TIMEOUT_MS,
-  });
+  try {
+    await page.waitForSelector("[data-cilt-print-ready]", {
+      timeout: PRINT_READY_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw withStageError("wait-print-ready", error);
+  }
   const readyState = await page.$eval(
     "[data-cilt-print-ready]",
     (node) => node.getAttribute("data-cilt-print-ready") || ""
@@ -334,29 +351,38 @@ const renderSheetChunkToPdf = async ({
     } catch (error) {
       routeError = "";
     }
-    throw new Error(
+    throw withStageError(
+      "print-route-ready-state",
       `Print route render failed${routeError ? `: ${routeError.trim()}` : "."}`
     );
   }
   const readyDoneAt = Date.now();
   try {
-    await page.waitForFunction(
-      () => (document.fonts ? document.fonts.status === "loaded" : true),
-      { timeout: PRINT_FONT_WAIT_TIMEOUT_MS }
-    );
+    try {
+      await page.waitForFunction(
+        () => (document.fonts ? document.fonts.status === "loaded" : true),
+        { timeout: PRINT_FONT_WAIT_TIMEOUT_MS }
+      );
+    } catch (error) {
+      throw withStageError("wait-fonts", error);
+    }
   } catch (error) {
     // Continue even if font readiness check times out.
   }
   const fontsDoneAt = Date.now();
   await page.emulateMedia({ media: "print" });
 
-  await page.pdf({
-    path: outputPath,
-    printBackground: true,
-    preferCSSPageSize: true,
-    margin: { top: "0mm", right: "0mm", bottom: "0mm", left: "0mm" },
-    timeout: JOB_TIMEOUT_MS,
-  });
+  try {
+    await page.pdf({
+      path: outputPath,
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: { top: "0mm", right: "0mm", bottom: "0mm", left: "0mm" },
+      timeout: JOB_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw withStageError("generate-pdf", error);
+  }
   const pdfDoneAt = Date.now();
   return {
     gotoMs: gotoDoneAt - startedAt,
@@ -420,7 +446,7 @@ const runJob = async (jobId) => {
 
     const chunkSize = Math.max(
       1,
-      Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, 100)
+      Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
     const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
     job.chunkSize = chunkSize;
@@ -596,7 +622,7 @@ const validateSheetsPayload = (sheets) => {
 const normalizeChunkSize = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return MAX_SHEETS_PER_CHUNK;
-  return Math.max(1, Math.min(Math.floor(parsed), 100));
+  return Math.max(1, Math.min(Math.floor(parsed), MAX_SHEETS_PER_CHUNK));
 };
 
 const createJob = ({ fileName, sheets, extraStyles = "", requestedBy, chunkSize }) => {
@@ -632,6 +658,13 @@ const createJob = ({ fileName, sheets, extraStyles = "", requestedBy, chunkSize 
     completedAt: null,
     error: null,
   };
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `[CILT PDF] Job created ${jobId}: totalSheets=${sanitizedSheets.length}, requestedChunkSize=${String(
+      chunkSize
+    )}, resolvedChunkSize=${resolvedChunkSize}, printBase=${PRINT_BASE_URL}`
+  );
 
   jobs.set(jobId, job);
   setImmediate(() => runJob(jobId));
