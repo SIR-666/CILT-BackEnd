@@ -50,8 +50,15 @@ const PRINT_READY_TIMEOUT_MS = Number(
   process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 45 * 1000
 );
 const PRINT_FONT_WAIT_TIMEOUT_MS = Number(
-  process.env.CILT_PDF_PRINT_FONT_WAIT_TIMEOUT_MS || 2500
+  process.env.CILT_PDF_PRINT_FONT_WAIT_TIMEOUT_MS || 800
 );
+const ALLOWED_RENDER_MODES = new Set(["inline", "route", "auto"]);
+const DEFAULT_RENDER_MODE = (() => {
+  const raw = String(process.env.CILT_PDF_RENDER_MODE || "inline")
+    .trim()
+    .toLowerCase();
+  return ALLOWED_RENDER_MODES.has(raw) ? raw : "inline";
+})();
 const SYSTEM_BROWSER_PATH_CANDIDATES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
@@ -114,6 +121,7 @@ const toPublicJob = (job) => ({
   cancelRequested: Boolean(job.cancelRequested),
   fileName: job.fileName,
   requestedBy: job.requestedBy,
+  renderMode: job.renderMode || DEFAULT_RENDER_MODE,
   totalSheets: job.totalSheets,
   chunkSize: job.chunkSize || null,
   totalChunks: job.totalChunks || null,
@@ -137,6 +145,12 @@ const sanitizeSheets = (sheets = []) =>
     pageSize: normalizePageSize(sheet?.pageSize),
     html: stripScriptTags(sheet?.html || ""),
   }));
+
+const normalizeRenderMode = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (ALLOWED_RENDER_MODES.has(raw)) return raw;
+  return DEFAULT_RENDER_MODE;
+};
 
 const parseNonNegativeInt = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -645,8 +659,10 @@ const runJob = async (jobId) => {
       1,
       Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
+    const renderMode = normalizeRenderMode(job.renderMode);
     const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
     job.chunkSize = chunkSize;
+    job.renderMode = renderMode;
     job.totalChunks = sheetChunks.length;
     job.processedChunks = 0;
     job.progress = 12;
@@ -678,13 +694,21 @@ const runJob = async (jobId) => {
           ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
           : "Rendering PDF pages...";
 
-      const chunkTiming = await renderSheetChunkToPdf({
-        page,
-        printRouteUrl,
-        sheets: chunkSheets,
-        extraStyles: job.extraStyles,
-        outputPath: chunkPath,
-      });
+      const chunkTiming =
+        renderMode === "inline"
+          ? await renderInlineChunkToPdf({
+              page,
+              sheets: chunkSheets,
+              extraStyles: job.extraStyles,
+              outputPath: chunkPath,
+            })
+          : await renderSheetChunkToPdf({
+              page,
+              printRouteUrl,
+              sheets: chunkSheets,
+              extraStyles: job.extraStyles,
+              outputPath: chunkPath,
+            });
 
       job.processedChunks = chunkNumber;
       const progressEnd = 12 + Math.round((chunkNumber / sheetChunks.length) * 68);
@@ -831,6 +855,7 @@ const createJob = ({
   requestedBy,
   chunkSize,
   printBaseUrl,
+  renderMode,
 }) => {
   const validationError = validateSheetsPayload(sheets);
   if (validationError) {
@@ -841,6 +866,7 @@ const createJob = ({
 
   const jobId = createJobId();
   const resolvedChunkSize = normalizeChunkSize(chunkSize);
+  const resolvedRenderMode = normalizeRenderMode(renderMode);
   const sanitizedSheets = sanitizeSheets(sheets);
   const resolvedPrintBaseUrl =
     normalizePrintBaseUrl(printBaseUrl) || normalizePrintBaseUrl(PRINT_BASE_URL);
@@ -853,6 +879,7 @@ const createJob = ({
     cancelRequested: false,
     fileName: sanitizeFileName(fileName, `cilt-export-${jobId}.pdf`),
     requestedBy: String(requestedBy || "").trim() || "unknown",
+    renderMode: resolvedRenderMode,
     printBaseUrl: resolvedPrintBaseUrl,
     totalSheets: sanitizedSheets.length,
     chunkSize: resolvedChunkSize,
@@ -872,7 +899,9 @@ const createJob = ({
   console.log(
     `[CILT PDF] Job created ${jobId}: totalSheets=${sanitizedSheets.length}, requestedChunkSize=${String(
       chunkSize
-    )}, resolvedChunkSize=${resolvedChunkSize}, printBase=${resolvedPrintBaseUrl || PRINT_BASE_URL}`
+    )}, resolvedChunkSize=${resolvedChunkSize}, renderMode=${resolvedRenderMode}, printBase=${
+      resolvedPrintBaseUrl || PRINT_BASE_URL
+    }`
   );
 
   jobs.set(jobId, job);

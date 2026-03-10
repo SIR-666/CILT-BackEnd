@@ -6,7 +6,8 @@ ciltPdfJobService.ensureCleanupLoop();
 
 router.post("/", async (req, res) => {
   try {
-    const { fileName, sheets, extraStyles, requestedBy, chunkSize, printBaseUrl } = req.body || {};
+    const { fileName, sheets, extraStyles, requestedBy, chunkSize, printBaseUrl, renderMode } =
+      req.body || {};
     const created = ciltPdfJobService.createJob({
       fileName,
       sheets,
@@ -14,6 +15,7 @@ router.post("/", async (req, res) => {
       requestedBy,
       chunkSize,
       printBaseUrl,
+      renderMode,
     });
     return res.status(202).json(created);
   } catch (error) {
