@@ -47,7 +47,7 @@ const PRINT_ROUTE_PATH = `/${String(
   .trim()
   .replace(/^\/+|\/+$/g, "")}`;
 const PRINT_READY_TIMEOUT_MS = Number(
-  process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 45 * 1000
+  process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 15 * 1000
 );
 const PRINT_FONT_WAIT_TIMEOUT_MS = Number(
   process.env.CILT_PDF_PRINT_FONT_WAIT_TIMEOUT_MS || 2500
@@ -334,6 +334,15 @@ const withStageError = (stage, error) => {
   return wrapped;
 };
 
+const normalizePathname = (urlValue) => {
+  try {
+    const parsed = new URL(String(urlValue || "").trim());
+    return parsed.pathname.replace(/\/+$/g, "");
+  } catch (error) {
+    return "";
+  }
+};
+
 const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
   const pageRules = Object.values(PAGE_SIZE_CONFIG)
     .map((entry) => `@page ${entry.pageName} { size: ${entry.cssSize}; margin: 0; }`)
@@ -392,8 +401,15 @@ const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
 };
 
 const renderInlineChunkToPdf = async ({ page, sheets = [], extraStyles = "", outputPath }) => {
+  const normalizedSheets = Array.isArray(sheets) ? sheets.filter(Boolean) : [];
+  if (normalizedSheets.length === 0) {
+    throw withStageError(
+      "fallback-no-sheets",
+      "Inline fallback received empty sheet payload."
+    );
+  }
   const startedAt = Date.now();
-  const html = buildInlinePrintHtmlDocument({ sheets, extraStyles });
+  const html = buildInlinePrintHtmlDocument({ sheets: normalizedSheets, extraStyles });
   try {
     await page.setContent(html, {
       waitUntil: "domcontentloaded",
@@ -455,6 +471,14 @@ const renderSheetChunkToPdf = async ({
       const status = Number(gotoResponse?.status?.());
       if (Number.isFinite(status) && status >= 400) {
         throw new Error(`Print route HTTP ${status} at ${printRouteUrl}`);
+      }
+      const expectedPath = normalizePathname(printRouteUrl);
+      const landedUrl = page.url();
+      const landedPath = normalizePathname(landedUrl);
+      if (expectedPath && landedPath && expectedPath !== landedPath) {
+        throw new Error(
+          `Print route redirected to unexpected path (${landedPath}) at ${landedUrl}`
+        );
       }
     } catch (error) {
       throw withStageError("goto-print-route", error);
@@ -653,13 +677,15 @@ const runJob = async (jobId) => {
       const chunkTiming = await renderSheetChunkToPdf({
         page,
         printRouteUrl,
+        sheets: chunkSheets,
+        extraStyles: job.extraStyles,
         outputPath: chunkPath,
       });
 
       job.processedChunks = chunkNumber;
       const progressEnd = 12 + Math.round((chunkNumber / sheetChunks.length) * 68);
       job.progress = Math.max(job.progress, progressEnd);
-      const timingSummary = `nav=${formatMs(chunkTiming.gotoMs)}, ready=${formatMs(
+      const timingSummary = `mode=${chunkTiming.mode}, nav=${formatMs(chunkTiming.gotoMs)}, ready=${formatMs(
         chunkTiming.readyMs
       )}, font=${formatMs(chunkTiming.fontsMs)}, pdf=${formatMs(
         chunkTiming.pdfMs
