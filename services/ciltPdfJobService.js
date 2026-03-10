@@ -192,6 +192,10 @@ const sanitizeJobErrorMessage = (error) => {
   }
 
   if (lower.includes("print route")) {
+    const detail = message.replace(/^\[stage:[^\]]+\]\s*/i, "").trim();
+    if (detail) {
+      return detail.slice(0, 320);
+    }
     return "Print route render failed. Check CILT_PDF_PRINT_BASE_URL and FE route /ciltApproval/print-job.";
   }
 
