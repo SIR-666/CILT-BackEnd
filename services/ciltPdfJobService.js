@@ -59,6 +59,12 @@ const DEFAULT_RENDER_MODE = (() => {
     .toLowerCase();
   return ALLOWED_RENDER_MODES.has(raw) ? raw : "inline";
 })();
+const LOCKED_RENDER_MODE = (() => {
+  const raw = String(process.env.CILT_PDF_LOCK_RENDER_MODE || "")
+    .trim()
+    .toLowerCase();
+  return ALLOWED_RENDER_MODES.has(raw) ? raw : "";
+})();
 const SYSTEM_BROWSER_PATH_CANDIDATES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
@@ -866,7 +872,8 @@ const createJob = ({
 
   const jobId = createJobId();
   const resolvedChunkSize = normalizeChunkSize(chunkSize);
-  const resolvedRenderMode = normalizeRenderMode(renderMode);
+  const requestedRenderMode = normalizeRenderMode(renderMode);
+  const resolvedRenderMode = LOCKED_RENDER_MODE || requestedRenderMode;
   const sanitizedSheets = sanitizeSheets(sheets);
   const resolvedPrintBaseUrl =
     normalizePrintBaseUrl(printBaseUrl) || normalizePrintBaseUrl(PRINT_BASE_URL);
@@ -899,7 +906,7 @@ const createJob = ({
   console.log(
     `[CILT PDF] Job created ${jobId}: totalSheets=${sanitizedSheets.length}, requestedChunkSize=${String(
       chunkSize
-    )}, resolvedChunkSize=${resolvedChunkSize}, renderMode=${resolvedRenderMode}, printBase=${
+    )}, resolvedChunkSize=${resolvedChunkSize}, requestedRenderMode=${requestedRenderMode}, resolvedRenderMode=${resolvedRenderMode}, lockRenderMode=${LOCKED_RENDER_MODE || "-"}, printBase=${
       resolvedPrintBaseUrl || PRINT_BASE_URL
     }`
   );
