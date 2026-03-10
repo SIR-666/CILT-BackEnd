@@ -46,6 +46,12 @@ const PRINT_ROUTE_PATH = `/${String(
 )
   .trim()
   .replace(/^\/+|\/+$/g, "")}`;
+const PRINT_READY_TIMEOUT_MS = Number(
+  process.env.CILT_PDF_PRINT_READY_TIMEOUT_MS || 45 * 1000
+);
+const PRINT_FONT_WAIT_TIMEOUT_MS = Number(
+  process.env.CILT_PDF_PRINT_FONT_WAIT_TIMEOUT_MS || 2500
+);
 const SYSTEM_BROWSER_PATH_CANDIDATES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
@@ -298,17 +304,21 @@ const ensureJobNotCancelled = (job) => {
   }
 };
 
+const formatMs = (value) => `${Math.max(0, Math.round(Number(value) || 0))}ms`;
+
 const renderSheetChunkToPdf = async ({
   page,
   printRouteUrl,
   outputPath,
 }) => {
+  const startedAt = Date.now();
   await page.goto(printRouteUrl, {
-    waitUntil: "networkidle",
-    timeout: JOB_TIMEOUT_MS,
+    waitUntil: "domcontentloaded",
+    timeout: PRINT_READY_TIMEOUT_MS,
   });
+  const gotoDoneAt = Date.now();
   await page.waitForSelector("[data-cilt-print-ready]", {
-    timeout: JOB_TIMEOUT_MS,
+    timeout: PRINT_READY_TIMEOUT_MS,
   });
   const readyState = await page.$eval(
     "[data-cilt-print-ready]",
@@ -328,14 +338,16 @@ const renderSheetChunkToPdf = async ({
       `Print route render failed${routeError ? `: ${routeError.trim()}` : "."}`
     );
   }
+  const readyDoneAt = Date.now();
   try {
     await page.waitForFunction(
       () => (document.fonts ? document.fonts.status === "loaded" : true),
-      { timeout: JOB_TIMEOUT_MS }
+      { timeout: PRINT_FONT_WAIT_TIMEOUT_MS }
     );
   } catch (error) {
     // Continue even if font readiness check times out.
   }
+  const fontsDoneAt = Date.now();
   await page.emulateMedia({ media: "print" });
 
   await page.pdf({
@@ -345,6 +357,14 @@ const renderSheetChunkToPdf = async ({
     margin: { top: "0mm", right: "0mm", bottom: "0mm", left: "0mm" },
     timeout: JOB_TIMEOUT_MS,
   });
+  const pdfDoneAt = Date.now();
+  return {
+    gotoMs: gotoDoneAt - startedAt,
+    readyMs: readyDoneAt - gotoDoneAt,
+    fontsMs: fontsDoneAt - readyDoneAt,
+    pdfMs: pdfDoneAt - fontsDoneAt,
+    totalMs: pdfDoneAt - startedAt,
+  };
 };
 
 const mergePdfFiles = async (chunkPaths = [], outputPath) => {
@@ -435,7 +455,7 @@ const runJob = async (jobId) => {
           ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
           : "Rendering PDF pages...";
 
-      await renderSheetChunkToPdf({
+      const chunkTiming = await renderSheetChunkToPdf({
         page,
         printRouteUrl,
         outputPath: chunkPath,
@@ -444,10 +464,19 @@ const runJob = async (jobId) => {
       job.processedChunks = chunkNumber;
       const progressEnd = 12 + Math.round((chunkNumber / sheetChunks.length) * 68);
       job.progress = Math.max(job.progress, progressEnd);
+      const timingSummary = `nav=${formatMs(chunkTiming.gotoMs)}, ready=${formatMs(
+        chunkTiming.readyMs
+      )}, font=${formatMs(chunkTiming.fontsMs)}, pdf=${formatMs(
+        chunkTiming.pdfMs
+      )}, total=${formatMs(chunkTiming.totalMs)}`;
       job.message =
         sheetChunks.length > 1
-          ? `Chunk ${chunkNumber}/${sheetChunks.length} completed.`
-          : "PDF pages rendered.";
+          ? `Chunk ${chunkNumber}/${sheetChunks.length} completed (${timingSummary}).`
+          : `PDF pages rendered (${timingSummary}).`;
+      // eslint-disable-next-line no-console
+      console.log(
+        `Chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets): ${timingSummary}`
+      );
     }
 
     ensureJobNotCancelled(job);
