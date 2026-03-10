@@ -322,10 +322,14 @@ const renderSheetChunkToPdf = async ({
 }) => {
   const startedAt = Date.now();
   try {
-    await page.goto(printRouteUrl, {
+    const gotoResponse = await page.goto(printRouteUrl, {
       waitUntil: "domcontentloaded",
       timeout: PRINT_READY_TIMEOUT_MS,
     });
+    const status = Number(gotoResponse?.status?.());
+    if (Number.isFinite(status) && status >= 400) {
+      throw new Error(`Print route HTTP ${status} at ${printRouteUrl}`);
+    }
   } catch (error) {
     throw withStageError("goto-print-route", error);
   }
@@ -335,7 +339,30 @@ const renderSheetChunkToPdf = async ({
       timeout: PRINT_READY_TIMEOUT_MS,
     });
   } catch (error) {
-    throw withStageError("wait-print-ready", error);
+    let pageTitle = "";
+    let pageSnippet = "";
+    let currentUrl = "";
+    try {
+      currentUrl = page.url();
+    } catch (readErr) {
+      currentUrl = "";
+    }
+    try {
+      pageTitle = await page.title();
+    } catch (readErr) {
+      pageTitle = "";
+    }
+    try {
+      pageSnippet = String(await page.content())
+        .replace(/\s+/g, " ")
+        .slice(0, 260);
+    } catch (readErr) {
+      pageSnippet = "";
+    }
+    throw withStageError(
+      "wait-print-ready",
+      `${compactErrorMessage(error)} | url=${currentUrl} | title=${pageTitle} | snippet=${pageSnippet}`
+    );
   }
   const readyState = await page.$eval(
     "[data-cilt-print-ready]",
