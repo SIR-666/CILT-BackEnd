@@ -21,6 +21,9 @@ const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24)
 const MAX_HTML_PAYLOAD_CHARS = Number(
   process.env.CILT_PDF_MAX_HTML_CHARS || 20_000_000
 );
+const BROWSER_IDLE_TTL_MS = Number(
+  process.env.CILT_PDF_BROWSER_IDLE_TTL_MS || 2 * 60 * 1000
+);
 const BROWSER_CHANNEL = String(process.env.CILT_PDF_BROWSER_CHANNEL || "").trim();
 const BROWSER_EXECUTABLE_PATH = String(
   process.env.CILT_PDF_BROWSER_EXECUTABLE_PATH || ""
@@ -80,6 +83,11 @@ const SYSTEM_BROWSER_PATH_CANDIDATES = [
 
 const jobs = new Map();
 let cleanupTimer = null;
+let sharedBrowser = null;
+let sharedBrowserPromise = null;
+let sharedBrowserCloseTimer = null;
+let activeRenderContexts = 0;
+let shutdownHookRegistered = false;
 
 const nowIso = () => new Date().toISOString();
 
@@ -324,6 +332,74 @@ const launchBrowserWithFallback = async (chromium) => {
   throw lastError || new Error("Unable to launch browser.");
 };
 
+const clearSharedBrowserCloseTimer = () => {
+  if (!sharedBrowserCloseTimer) return;
+  clearTimeout(sharedBrowserCloseTimer);
+  sharedBrowserCloseTimer = null;
+};
+
+const resetSharedBrowserState = () => {
+  sharedBrowser = null;
+  sharedBrowserPromise = null;
+};
+
+const closeSharedBrowser = async () => {
+  clearSharedBrowserCloseTimer();
+  if (!sharedBrowser) return;
+  const browserToClose = sharedBrowser;
+  resetSharedBrowserState();
+  try {
+    await browserToClose.close();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`CILT PDF shared browser close error: ${error.message}`);
+  }
+};
+
+const scheduleSharedBrowserClose = () => {
+  clearSharedBrowserCloseTimer();
+  if (BROWSER_IDLE_TTL_MS <= 0) return;
+  sharedBrowserCloseTimer = setTimeout(() => {
+    if (activeRenderContexts > 0 || !sharedBrowser) return;
+    closeSharedBrowser().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error(`CILT PDF shared browser cleanup error: ${error.message}`);
+    });
+  }, BROWSER_IDLE_TTL_MS);
+  if (typeof sharedBrowserCloseTimer.unref === "function") {
+    sharedBrowserCloseTimer.unref();
+  }
+};
+
+const getSharedBrowser = async (chromium) => {
+  clearSharedBrowserCloseTimer();
+  if (sharedBrowser && sharedBrowser.isConnected()) {
+    return sharedBrowser;
+  }
+  if (sharedBrowserPromise) {
+    return sharedBrowserPromise;
+  }
+
+  sharedBrowserPromise = launchBrowserWithFallback(chromium)
+    .then((browser) => {
+      sharedBrowser = browser;
+      sharedBrowserPromise = null;
+      if (typeof browser?.on === "function") {
+        browser.on("disconnected", () => {
+          clearSharedBrowserCloseTimer();
+          resetSharedBrowserState();
+        });
+      }
+      return browser;
+    })
+    .catch((error) => {
+      sharedBrowserPromise = null;
+      throw error;
+    });
+
+  return sharedBrowserPromise;
+};
+
 const splitIntoChunks = (items = [], chunkSize = MAX_SHEETS_PER_CHUNK) => {
   const normalizedChunkSize = Math.max(1, Number(chunkSize) || MAX_SHEETS_PER_CHUNK);
   const chunks = [];
@@ -389,7 +465,7 @@ const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CILT PDF Job</title>
+    <title>CILTpro PDF</title>
     <style>
       ${pageRules}
       html, body {
@@ -635,8 +711,8 @@ const runJob = async (jobId) => {
   const job = jobs.get(jobId);
   if (!job || job.status !== "queued") return;
 
-  let browser = null;
   let context = null;
+  let hasActiveContext = false;
   const chunkOutputPaths = [];
   try {
     ensureJobNotCancelled(job);
@@ -654,11 +730,13 @@ const runJob = async (jobId) => {
 
     await ensureDir(JOB_OUTPUT_DIR);
 
-    browser = await launchBrowserWithFallback(chromium);
+    const browser = await getSharedBrowser(chromium);
     context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
     });
+    activeRenderContexts += 1;
+    hasActiveContext = true;
     const page = await context.newPage();
 
     const chunkSize = Math.max(
@@ -770,7 +848,7 @@ const runJob = async (jobId) => {
       job.error = sanitizeJobErrorMessage(error);
       // eslint-disable-next-line no-console
       console.error(
-        `CILT PDF Job failed (${jobId}): ${job.error} | raw=${compactErrorMessage(
+        `CILTpro PDF failed (${jobId}): ${job.error} | raw=${compactErrorMessage(
           error
         )}`
       );
@@ -794,14 +872,10 @@ const runJob = async (jobId) => {
         console.error(`CILT PDF context close error (${jobId}): ${error.message}`);
       }
     }
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error(`CILT PDF browser close error (${jobId}): ${error.message}`);
-      }
+    if (hasActiveContext) {
+      activeRenderContexts = Math.max(0, activeRenderContexts - 1);
     }
+    scheduleSharedBrowserClose();
   }
 };
 
@@ -996,6 +1070,12 @@ const ensureCleanupLoop = () => {
       console.error(`CILT PDF cleanup loop error: ${error.message}`);
     });
   }, JOB_CLEANUP_INTERVAL_MS);
+  if (!shutdownHookRegistered) {
+    shutdownHookRegistered = true;
+    process.once("beforeExit", () => {
+      closeSharedBrowser().catch(() => {});
+    });
+  }
 };
 
 module.exports = {
