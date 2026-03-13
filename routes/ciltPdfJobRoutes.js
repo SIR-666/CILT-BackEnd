@@ -26,6 +26,36 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.post("/v2", async (req, res) => {
+  try {
+    const {
+      fileName,
+      items,
+      extraStyles,
+      requestedBy,
+      chunkSize,
+      printBaseUrl,
+      renderMode,
+    } = req.body || {};
+
+    const created = await ciltPdfJobService.createJobFromItems({
+      fileName,
+      items,
+      extraStyles,
+      requestedBy,
+      chunkSize,
+      printBaseUrl,
+      renderMode,
+    });
+    return res.status(202).json(created);
+  } catch (error) {
+    const statusCode = Number(error?.statusCode) || 500;
+    return res.status(statusCode).json({
+      error: error?.message || "Failed to create PDF job via v2 endpoint.",
+    });
+  }
+});
+
 router.post("/:jobId/cancel", (req, res) => {
   const { jobId } = req.params;
   const job = ciltPdfJobService.cancelJob(jobId);

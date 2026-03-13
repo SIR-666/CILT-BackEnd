@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { PDFDocument } = require("pdf-lib");
+const ciltService = require("./ciltService");
+const cipService = require("./cipService");
 
 const PAGE_SIZE_CONFIG = {
   "A4 portrait": { pageName: "cilt-a4-portrait", cssSize: "A4 portrait" },
@@ -19,7 +21,7 @@ const JOB_TIMEOUT_MS = Number(process.env.CILT_PDF_JOB_TIMEOUT_MS || 10 * 60 * 1
 const MAX_SHEET_COUNT = Number(process.env.CILT_PDF_MAX_SHEETS || 500);
 const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24);
 const MAX_HTML_PAYLOAD_CHARS = Number(
-  process.env.CILT_PDF_MAX_HTML_CHARS || 20_000_000
+  process.env.CILT_PDF_MAX_HTML_CHARS || 80_000_000
 );
 const BROWSER_IDLE_TTL_MS = Number(
   process.env.CILT_PDF_BROWSER_IDLE_TTL_MS || 2 * 60 * 1000
@@ -80,6 +82,634 @@ const SYSTEM_BROWSER_PATH_CANDIDATES = [
   "/usr/bin/brave-browser",
   "/snap/bin/chromium",
 ];
+const V2_SUPPORTED_PACKAGE_TYPES = new Set(["CHECKLIST CILT", "REPORT CIP"]);
+const V2_HEADER_META_DEFAULTS = {
+  "CHECKLIST CILT": {
+    frm: "FIL - 015",
+    rev: "00",
+    berlaku: "01 - April - 2025",
+    hal: "1 dari 5",
+  },
+  "REPORT CIP": {
+    frm: "FIL - 009",
+    rev: "00",
+    berlaku: "21 - Jul - 2023",
+    hal: "1 dari 3",
+  },
+};
+const V2_RENDERER_STYLES = `
+  .header-container {
+    --rh-logo-col: 19%;
+    --rh-company-col: 61%;
+    --rh-meta-col: 20%;
+    --rh-title-label-col: 19%;
+    --rh-title-content-col: 61%;
+    --rh-title-meta-col: 20%;
+    border: 1px solid #d7d7d7;
+    border-radius: 8px;
+    background: #fff;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .header-container.a4-portrait {
+    --rh-logo-col: 24%;
+    --rh-company-col: 54%;
+    --rh-meta-col: 22%;
+    --rh-title-label-col: 24%;
+    --rh-title-content-col: 54%;
+    --rh-title-meta-col: 22%;
+  }
+  .header-container.a4-landscape {
+    --rh-logo-col: 19%;
+    --rh-company-col: 61%;
+    --rh-meta-col: 20%;
+    --rh-title-label-col: 19%;
+    --rh-title-content-col: 61%;
+    --rh-title-meta-col: 20%;
+  }
+  .header-container.a3-landscape {
+    --rh-logo-col: 17%;
+    --rh-company-col: 63%;
+    --rh-meta-col: 20%;
+    --rh-title-label-col: 17%;
+    --rh-title-content-col: 63%;
+    --rh-title-meta-col: 20%;
+  }
+  .header-main-table,
+  .header-title-table,
+  .meta-info-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+  .logo-section {
+    width: var(--rh-logo-col);
+    text-align: center;
+    vertical-align: middle;
+    padding: 8px;
+  }
+  .logo-text {
+    font-weight: 700;
+    font-size: 36px;
+    color: #2f8e3b;
+    font-style: italic;
+    font-family: "Times New Roman", serif;
+  }
+  .company-section {
+    width: var(--rh-company-col);
+    text-align: center;
+    vertical-align: middle;
+    padding: 8px 16px;
+  }
+  .company-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+  }
+  .meta-section {
+    width: var(--rh-meta-col);
+    padding: 6px 10px;
+    border-left: 1px solid #e5e5e5;
+  }
+  .meta-info-table td {
+    padding: 1px 0;
+    font-size: 10.5px;
+    line-height: 1.25;
+    vertical-align: top;
+  }
+  .meta-label {
+    width: 48px;
+    font-weight: 700;
+  }
+  .meta-colon {
+    width: 8px;
+    text-align: center;
+  }
+  .meta-value {
+    font-weight: 700;
+  }
+  .header-title-table {
+    border-top: 1px solid #e5e5e5;
+  }
+  .title-label {
+    width: var(--rh-title-label-col);
+    padding: 4px 8px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 11px;
+    border-right: 1px solid #e5e5e5;
+    background: #fafafa;
+  }
+  .title-content {
+    width: var(--rh-title-content-col);
+    padding: 4px 12px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .title-meta-spacer {
+    width: var(--rh-title-meta-col);
+    border-left: 1px solid #e5e5e5;
+    background: #fafafa;
+  }
+  .report-info {
+    margin-bottom: 10px;
+  }
+  .report-process-order {
+    margin: 0 0 6px;
+    font-size: 11px;
+    color: #111827;
+  }
+  .general-info-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 10.5px;
+  }
+  .general-info-table td {
+    border: 1px solid #000;
+    padding: 5px 7px;
+    vertical-align: top;
+  }
+  .v2-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 10px;
+  }
+  .v2-table th,
+  .v2-table td {
+    border: 1px solid #000;
+    padding: 5px 6px;
+    vertical-align: top;
+  }
+  .v2-table th {
+    background: #f2f2f2;
+    font-weight: 700;
+    text-align: center;
+  }
+  .v2-table td.left {
+    text-align: left;
+  }
+  .v2-table td.center {
+    text-align: center;
+  }
+  .v2-empty {
+    text-align: center !important;
+    color: #6b7280;
+    font-style: italic;
+  }
+  .cip-title {
+    margin: 0 0 8px 0;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .cip-line {
+    margin: 0;
+    font-size: 11px;
+  }
+  .cip-section-title {
+    margin: 10px 0 6px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+`;
+
+const toUpperTrim = (value) => String(value || "").trim().toUpperCase();
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const toDisplayText = (value, fallback = "-") => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : fallback;
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  return String(value);
+};
+
+const isMeaningfulSubmitterText = (value) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  return !["-", "null", "undefined", "n/a", "na"].includes(normalized);
+};
+
+const parseJsonArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+  return [];
+};
+
+const formatDateTimeForPrint = (value) => {
+  if (!value) return "-";
+  const parsed = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return "-";
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const year = String(parsed.getFullYear()).slice(-2);
+  const hh = String(parsed.getHours()).padStart(2, "0");
+  const mm = String(parsed.getMinutes()).padStart(2, "0");
+  const ss = String(parsed.getSeconds()).padStart(2, "0");
+  return `${day}/${month}/${year} ${hh}:${mm}:${ss}`;
+};
+
+const normalizeSourceType = (value) => {
+  const normalized = toUpperTrim(value);
+  if (normalized === "CIP") return "CIP";
+  return "CILT";
+};
+
+const normalizePackageType = (value) => toUpperTrim(value);
+
+const resolveSubmittedBy = ({ record, inspectionRows = [] }) => {
+  const candidateKeys = [
+    "submittedBy",
+    "submitBy",
+    "submitted_by",
+    "submit_by",
+    "submitter",
+    "submittedUser",
+    "submitted_user",
+    "username",
+    "userName",
+    "user_name",
+    "createdBy",
+    "created_by",
+    "approval_coor_by",
+    "approval_spv_by",
+    "operator",
+    "user",
+  ];
+
+  for (const key of candidateKeys) {
+    const value = record?.[key];
+    if (isMeaningfulSubmitterText(value)) return toDisplayText(value);
+  }
+
+  for (const row of inspectionRows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    for (const key of candidateKeys) {
+      const value = row?.[key];
+      if (isMeaningfulSubmitterText(value)) return toDisplayText(value);
+    }
+  }
+
+  return "-";
+};
+
+const resolveV2HeaderMeta = (packageType, extraMeta = {}) => {
+  const defaults = V2_HEADER_META_DEFAULTS[packageType] || {
+    frm: "-",
+    rev: "-",
+    berlaku: "-",
+    hal: "-",
+  };
+  return {
+    frm: toDisplayText(extraMeta?.frm || defaults.frm),
+    rev: toDisplayText(extraMeta?.rev || defaults.rev),
+    berlaku: toDisplayText(extraMeta?.berlaku || defaults.berlaku),
+    hal: toDisplayText(extraMeta?.hal || defaults.hal),
+  };
+};
+
+const getHeaderPageClass = (pageSize) => {
+  const normalized = normalizePageSize(pageSize);
+  if (normalized === "A4 landscape") return "a4-landscape";
+  if (normalized === "A3 landscape") return "a3-landscape";
+  return "a4-portrait";
+};
+
+const renderV2ReportHeader = ({ title, pageSize, headerMeta }) => {
+  const pageClass = getHeaderPageClass(pageSize);
+  return `
+    <div class="header-container ${escapeHtml(pageClass)}">
+      <table class="header-main-table">
+        <tr>
+          <td class="logo-section"><span class="logo-text">Greenfields</span></td>
+          <td class="company-section"><div class="company-name">PT. GREENFIELDS INDONESIA</div></td>
+          <td class="meta-section">
+            <table class="meta-info-table">
+              <tr><td class="meta-label">FRM</td><td class="meta-colon">:</td><td class="meta-value">${escapeHtml(
+                headerMeta.frm
+              )}</td></tr>
+              <tr><td class="meta-label">Rev</td><td class="meta-colon">:</td><td class="meta-value">${escapeHtml(
+                headerMeta.rev
+              )}</td></tr>
+              <tr><td class="meta-label">Berlaku</td><td class="meta-colon">:</td><td class="meta-value">${escapeHtml(
+                headerMeta.berlaku
+              )}</td></tr>
+              <tr><td class="meta-label">Hal</td><td class="meta-colon">:</td><td class="meta-value">${escapeHtml(
+                headerMeta.hal
+              )}</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <table class="header-title-table">
+        <tr>
+          <td class="title-label">JUDUL</td>
+          <td class="title-content">${escapeHtml(title || "-")}</td>
+          <td class="title-meta-spacer"></td>
+        </tr>
+      </table>
+    </div>
+  `;
+};
+
+const renderV2GeneralInfoTable = ({ record, submittedBy, packageType }) => `
+  <table class="general-info-table">
+    <tbody>
+      <tr>
+        <td><strong>Date:</strong> ${escapeHtml(formatDateTimeForPrint(record?.date))}</td>
+        <td><strong>Product:</strong> ${escapeHtml(toDisplayText(record?.product || record?.cipType))}</td>
+      </tr>
+      <tr>
+        <td><strong>Plant:</strong> ${escapeHtml(toDisplayText(record?.plant, "Milk Filling Packing"))}</td>
+        <td><strong>Line:</strong> ${escapeHtml(toDisplayText(record?.line))}</td>
+      </tr>
+      <tr>
+        <td><strong>Machine:</strong> ${escapeHtml(toDisplayText(record?.machine || record?.posisi || "FILLER"))}</td>
+        <td><strong>Shift:</strong> ${escapeHtml(toDisplayText(record?.shift))}</td>
+      </tr>
+      <tr>
+        <td><strong>Submitted By:</strong> ${escapeHtml(toDisplayText(submittedBy))}</td>
+        <td><strong>Package:</strong> ${escapeHtml(packageType)}</td>
+      </tr>
+    </tbody>
+  </table>
+`;
+
+const normalizeChecklistRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => row && typeof row === "object" && !Array.isArray(row))
+    .map((row) => ({
+      jobType: toDisplayText(row?.job_type ?? row?.jobType ?? row?.activity, ""),
+      component: toDisplayText(row?.componen ?? row?.component ?? row?.equipment, ""),
+      result: toDisplayText(row?.results ?? row?.result ?? row?.status, ""),
+      user: toDisplayText(row?.user, ""),
+      time: toDisplayText(row?.time, ""),
+    }));
+
+const renderChecklistTableHtml = (rows = []) => {
+  const safeRows = normalizeChecklistRows(rows);
+  const rowMarkup =
+    safeRows.length > 0
+      ? safeRows
+          .map(
+            (row, index) => `
+              <tr>
+                <td class="center">${index + 1}</td>
+                <td class="left">${escapeHtml(toDisplayText(row.jobType, "-"))}</td>
+                <td class="left">${escapeHtml(toDisplayText(row.component, "-"))}</td>
+                <td class="center">${escapeHtml(toDisplayText(row.result, "-"))}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : '<tr><td class="v2-empty" colspan="4">Tidak ada data inspeksi</td></tr>';
+
+  return `
+    <table class="v2-table">
+      <thead>
+        <tr>
+          <th style="width:7%;">No</th>
+          <th style="width:37%; text-align:left;">Job Type</th>
+          <th style="width:38%; text-align:left;">Component</th>
+          <th style="width:18%;">Result</th>
+        </tr>
+      </thead>
+      <tbody>${rowMarkup}</tbody>
+    </table>
+  `;
+};
+
+const normalizeCipSteps = (record = {}) => {
+  const steps = parseJsonArray(record?.steps || record?.cip_steps || record?.stepsData);
+  return steps
+    .filter((step) => step && typeof step === "object" && !Array.isArray(step))
+    .map((step, index) => ({
+      no: step?.no ?? index + 1,
+      stepName: toDisplayText(step?.stepName ?? step?.step_name ?? step?.stepType ?? step?.step_type),
+      target: toDisplayText(step?.target ?? step?.targetValue ?? step?.tempMin),
+      actual: toDisplayText(step?.actual ?? step?.actualValue ?? step?.tempActual),
+      duration: toDisplayText(step?.duration ?? step?.time),
+    }));
+};
+
+const normalizeCipSpecialRecords = (record = {}) => {
+  const copRecords = parseJsonArray(record?.copRecords || record?.cop_records);
+  const specialRecords = parseJsonArray(record?.specialRecords || record?.special_records);
+  const merged = [...copRecords, ...specialRecords];
+  return merged
+    .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+    .map((entry) => ({
+      type: toDisplayText(entry?.stepType ?? entry?.step_type ?? entry?.type),
+      temp: toDisplayText(entry?.tempActual ?? entry?.temp_actual),
+      conc: toDisplayText(entry?.concActual ?? entry?.conc_actual),
+      start: toDisplayText(entry?.startTime ?? entry?.start_time),
+      end: toDisplayText(entry?.endTime ?? entry?.end_time),
+    }));
+};
+
+const renderCipContentHtml = (record = {}) => {
+  const steps = normalizeCipSteps(record);
+  const specials = normalizeCipSpecialRecords(record);
+  const stepRows =
+    steps.length > 0
+      ? steps
+          .map(
+            (row) => `
+              <tr>
+                <td class="center">${escapeHtml(toDisplayText(row.no))}</td>
+                <td class="left">${escapeHtml(row.stepName)}</td>
+                <td class="center">${escapeHtml(row.target)}</td>
+                <td class="center">${escapeHtml(row.actual)}</td>
+                <td class="center">${escapeHtml(row.duration)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : '<tr><td class="v2-empty" colspan="5">No CIP step data available</td></tr>';
+
+  const specialRows =
+    specials.length > 0
+      ? specials
+          .map(
+            (row) => `
+              <tr>
+                <td class="left">${escapeHtml(row.type)}</td>
+                <td class="center">${escapeHtml(row.temp)}</td>
+                <td class="center">${escapeHtml(row.conc)}</td>
+                <td class="center">${escapeHtml(row.start)}</td>
+                <td class="center">${escapeHtml(row.end)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : '<tr><td class="v2-empty" colspan="5">No special records</td></tr>';
+
+  return `
+    <p class="cip-title">CIP Type: ${escapeHtml(toDisplayText(record?.cipType || record?.cip_type))}</p>
+    <p class="cip-line">Posisi: ${escapeHtml(toDisplayText(record?.posisi))}</p>
+    <p class="cip-line">Operator: ${escapeHtml(toDisplayText(record?.operator))}</p>
+    <p class="cip-line">Status: ${escapeHtml(toDisplayText(record?.status))}</p>
+    <p class="cip-line">Flow Rate: ${escapeHtml(toDisplayText(record?.flowRate || record?.flow_rate, "-"))}</p>
+    <p class="cip-line">Flow Rate D/BC: ${escapeHtml(
+      `${toDisplayText(record?.flowRateD || record?.flow_rate_d, "-")} / ${toDisplayText(
+        record?.flowRateBC || record?.flow_rate_bc,
+        "-"
+      )}`
+    )}</p>
+    <p class="cip-section-title">CIP Steps</p>
+    <table class="v2-table">
+      <thead>
+        <tr>
+          <th style="width:8%;">No</th>
+          <th style="width:40%; text-align:left;">Step</th>
+          <th style="width:17%;">Target</th>
+          <th style="width:17%;">Actual</th>
+          <th style="width:18%;">Duration</th>
+        </tr>
+      </thead>
+      <tbody>${stepRows}</tbody>
+    </table>
+    <p class="cip-section-title">Special Records</p>
+    <table class="v2-table">
+      <thead>
+        <tr>
+          <th style="width:32%; text-align:left;">Type</th>
+          <th style="width:17%;">Temp</th>
+          <th style="width:17%;">Conc</th>
+          <th style="width:17%;">Start</th>
+          <th style="width:17%;">End</th>
+        </tr>
+      </thead>
+      <tbody>${specialRows}</tbody>
+    </table>
+  `;
+};
+
+const dedupeV2Items = (items = []) => {
+  const deduped = [];
+  const seen = new Set();
+  for (const rawItem of Array.isArray(items) ? items : []) {
+    const id = Number(rawItem?.id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const sourceType = normalizeSourceType(rawItem?.sourceType || rawItem?.source);
+    const key = `${sourceType}:${id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({
+      id: Math.floor(id),
+      sourceType,
+      packageType: normalizePackageType(rawItem?.packageType),
+      headerMeta: rawItem?.headerMeta && typeof rawItem.headerMeta === "object" ? rawItem.headerMeta : {},
+    });
+  }
+  return deduped;
+};
+
+const isCipItemDescriptor = (item = {}) =>
+  normalizeSourceType(item?.sourceType) === "CIP" ||
+  normalizePackageType(item?.packageType) === "REPORT CIP";
+
+const fetchV2RecordByItem = async (item = {}) => {
+  if (isCipItemDescriptor(item)) {
+    const record = await cipService.getCIPReportById(item.id);
+    if (!record) {
+      throw new Error(`CIP report id ${item.id} not found.`);
+    }
+    return {
+      sourceType: "CIP",
+      packageType: "REPORT CIP",
+      record,
+    };
+  }
+
+  const record = await ciltService.getCILT(item.id);
+  if (!record) {
+    throw new Error(`CILT report id ${item.id} not found.`);
+  }
+  return {
+    sourceType: "CILT",
+    packageType: normalizePackageType(record.packageType),
+    record,
+  };
+};
+
+const buildV2SheetFromRecord = ({
+  packageType,
+  sourceType,
+  record,
+  headerMeta = {},
+}) => {
+  const supportedPackageType = normalizePackageType(packageType);
+  if (!V2_SUPPORTED_PACKAGE_TYPES.has(supportedPackageType)) {
+    return null;
+  }
+
+  const pageSize = supportedPackageType === "CHECKLIST CILT" ? "A4 landscape" : "A4 portrait";
+  const reportTitle = supportedPackageType;
+  const meta = resolveV2HeaderMeta(supportedPackageType, headerMeta);
+  const inspectionRows =
+    supportedPackageType === "CHECKLIST CILT"
+      ? parseJsonArray(record?.inspectionData)
+      : parseJsonArray(record?.steps || record?.stepsData);
+  const submittedBy = resolveSubmittedBy({ record, inspectionRows });
+  const headerHtml = renderV2ReportHeader({
+    title: reportTitle,
+    pageSize,
+    headerMeta: meta,
+  });
+  const generalInfoHtml = renderV2GeneralInfoTable({
+    record,
+    submittedBy,
+    packageType: supportedPackageType,
+  });
+  const detailHtml =
+    supportedPackageType === "CHECKLIST CILT"
+      ? renderChecklistTableHtml(inspectionRows)
+      : renderCipContentHtml(record);
+
+  const processOrder =
+    sourceType === "CIP"
+      ? toDisplayText(record?.processOrder || record?.process_order)
+      : toDisplayText(record?.processOrder);
+
+  return {
+    pageSize,
+    html: `
+      <section class="cilt-print-sheet" data-page-size="${escapeHtml(pageSize)}">
+        ${headerHtml}
+        <div class="report-info">
+          <p class="report-process-order"><strong>Process Order:</strong> ${escapeHtml(processOrder)}</p>
+          ${generalInfoHtml}
+        </div>
+        ${detailHtml}
+      </section>
+    `,
+  };
+};
 
 const jobs = new Map();
 let cleanupTimer = null;
@@ -916,7 +1546,7 @@ const validateSheetsPayload = (sheets) => {
   for (const sheet of sheets) {
     totalChars += String(sheet?.html || "").length;
     if (totalChars > MAX_HTML_PAYLOAD_CHARS) {
-      return `HTML payload too large. Max allowed chars is ${MAX_HTML_PAYLOAD_CHARS}.`;
+      return `HTML payload too large. Max allowed chars is ${MAX_HTML_PAYLOAD_CHARS}. Current payload chars: ${totalChars}.`;
     }
   }
   return null;
@@ -988,6 +1618,84 @@ const createJob = ({
   jobs.set(jobId, job);
   setImmediate(() => runJob(jobId));
   return toPublicJob(job);
+};
+
+const createJobFromItems = async ({
+  fileName,
+  items,
+  extraStyles = "",
+  requestedBy,
+  chunkSize,
+  printBaseUrl,
+  renderMode,
+}) => {
+  const normalizedItems = dedupeV2Items(items);
+  if (normalizedItems.length === 0) {
+    const error = new Error("items is required and must contain valid id/sourceType entries.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (normalizedItems.length > MAX_SHEET_COUNT) {
+    const error = new Error(`Too many items. Max allowed is ${MAX_SHEET_COUNT}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const sheets = [];
+  const unsupportedPackages = new Set();
+
+  try {
+    for (const item of normalizedItems) {
+      const loaded = await fetchV2RecordByItem(item);
+      if (!V2_SUPPORTED_PACKAGE_TYPES.has(loaded.packageType)) {
+        unsupportedPackages.add(loaded.packageType || "UNKNOWN");
+        continue;
+      }
+
+      const sheet = buildV2SheetFromRecord({
+        packageType: loaded.packageType,
+        sourceType: loaded.sourceType,
+        record: loaded.record,
+        headerMeta: item.headerMeta,
+      });
+      if (sheet) sheets.push(sheet);
+    }
+  } catch (error) {
+    const wrapped = new Error(
+      `Failed to prepare server-side PDF sheets: ${compactErrorMessage(error)}`
+    );
+    wrapped.statusCode =
+      Number(error?.statusCode) ||
+      (String(error?.message || "").toLowerCase().includes("not found") ? 404 : 500);
+    throw wrapped;
+  }
+
+  if (unsupportedPackages.size > 0) {
+    const error = new Error(
+      `Unsupported package type(s) for /v2: ${Array.from(unsupportedPackages).join(
+        ", "
+      )}. Supported: ${Array.from(V2_SUPPORTED_PACKAGE_TYPES).join(", ")}`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (sheets.length === 0) {
+    const error = new Error("No printable sheets were generated from requested items.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const mergedExtraStyles = `${V2_RENDERER_STYLES}\n${String(extraStyles || "")}`;
+  return createJob({
+    fileName,
+    sheets,
+    extraStyles: mergedExtraStyles,
+    requestedBy,
+    chunkSize,
+    printBaseUrl,
+    renderMode,
+  });
 };
 
 const getJob = (jobId) => {
@@ -1080,6 +1788,7 @@ const ensureCleanupLoop = () => {
 
 module.exports = {
   createJob,
+  createJobFromItems,
   getJob,
   getJobInternal,
   getJobPrintPayload,
