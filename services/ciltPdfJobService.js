@@ -765,6 +765,7 @@ const toPublicJob = (job) => ({
   cancelRequested: Boolean(job.cancelRequested),
   fileName: job.fileName,
   requestedBy: job.requestedBy,
+  jobSource: job.jobSource || "v1-sheets",
   renderMode: job.renderMode || DEFAULT_RENDER_MODE,
   totalSheets: job.totalSheets,
   chunkSize: job.chunkSize || null,
@@ -1566,6 +1567,7 @@ const createJob = ({
   chunkSize,
   printBaseUrl,
   renderMode,
+  jobSource = "v1-sheets",
 }) => {
   const validationError = validateSheetsPayload(sheets);
   if (validationError) {
@@ -1590,6 +1592,7 @@ const createJob = ({
     cancelRequested: false,
     fileName: sanitizeFileName(fileName, `cilt-export-${jobId}.pdf`),
     requestedBy: String(requestedBy || "").trim() || "unknown",
+    jobSource: String(jobSource || "v1-sheets").trim() || "v1-sheets",
     renderMode: resolvedRenderMode,
     printBaseUrl: resolvedPrintBaseUrl,
     totalSheets: sanitizedSheets.length,
@@ -1610,7 +1613,7 @@ const createJob = ({
   console.log(
     `[CILT PDF] Job created ${jobId}: totalSheets=${sanitizedSheets.length}, requestedChunkSize=${String(
       chunkSize
-    )}, resolvedChunkSize=${resolvedChunkSize}, requestedRenderMode=${requestedRenderMode}, resolvedRenderMode=${resolvedRenderMode}, lockRenderMode=${LOCKED_RENDER_MODE || "-"}, printBase=${
+    )}, resolvedChunkSize=${resolvedChunkSize}, requestedRenderMode=${requestedRenderMode}, resolvedRenderMode=${resolvedRenderMode}, lockRenderMode=${LOCKED_RENDER_MODE || "-"}, source=${job.jobSource}, printBase=${
       resolvedPrintBaseUrl || PRINT_BASE_URL
     }`
   );
@@ -1695,6 +1698,7 @@ const createJobFromItems = async ({
     chunkSize,
     printBaseUrl,
     renderMode,
+    jobSource: "v2-items",
   });
 };
 
