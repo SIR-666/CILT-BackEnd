@@ -5,9 +5,9 @@ const V2_HEADER_META_DEFAULTS = {};
 
 const V2_PACKAGE_PAGE_SIZE_MAP = {
   SEGREGASI: "A4 landscape",
-  "PEMAKAIAN SCREW CAP": "A4 landscape",
-  "PEMAKAIAN PAPER": "A4 landscape",
-  "PENGECEKAN H2O2 ( SPRAY )": "A4 landscape",
+  "PEMAKAIAN SCREW CAP": "A4 portrait",
+  "PEMAKAIAN PAPER": "A4 portrait",
+  "PENGECEKAN H2O2 ( SPRAY )": "A4 portrait",
   "PERFORMA RED AND GREEN": "A4 landscape",
   "CHECKLIST CILT": "A4 landscape",
   "A3 / FLEX": "A3 landscape",

@@ -620,7 +620,7 @@ const renderInlineChunkToPdf = async ({ page, sheets = [], extraStyles = "", out
   await renderCurrentPageToPdf(page, outputPath, "fallback-generate-pdf");
   const pdfDoneAt = Date.now();
   return buildChunkTiming({
-    mode: "inline-fallback",
+    mode: "inline",
     startedAt,
     gotoDoneAt,
     readyDoneAt,
@@ -646,6 +646,7 @@ const renderSheetChunkToPdf = async ({
   extraStyles = "",
   outputPath,
 }) => {
+  let routeWaitState = "";
   try {
     const startedAt = Date.now();
     try {
@@ -671,8 +672,22 @@ const renderSheetChunkToPdf = async ({
     const gotoDoneAt = Date.now();
     try {
       await page.waitForSelector("[data-cilt-print-ready]", {
+        state: "attached",
         timeout: PRINT_READY_TIMEOUT_MS,
       });
+      try {
+        await page.waitForFunction(
+          () => {
+            const node = document.querySelector("[data-cilt-print-ready]");
+            if (!node) return false;
+            const state = (node.getAttribute("data-cilt-print-ready") || "").trim();
+            return state === "1" || state === "0" || state === "-1";
+          },
+          { timeout: PRINT_READY_TIMEOUT_MS }
+        );
+      } catch (stateError) {
+        throw withStageError("print-route-ready-state", stateError);
+      }
     } catch (error) {
       let pageTitle = "";
       let pageSnippet = "";
@@ -703,6 +718,7 @@ const renderSheetChunkToPdf = async ({
       "[data-cilt-print-ready]",
       (node) => node.getAttribute("data-cilt-print-ready") || ""
     );
+    routeWaitState = String(readyState || "").trim();
     if (readyState !== "1") {
       let routeError = "";
       try {
@@ -715,7 +731,9 @@ const renderSheetChunkToPdf = async ({
       }
       throw withStageError(
         "print-route-ready-state",
-        `Print route render failed${routeError ? `: ${routeError.trim()}` : "."}`
+        `Print route render failed (state=${routeWaitState || "-"}${
+          routeError ? `, error=${routeError.trim()}` : ""
+        }).`
       );
     }
     const readyDoneAt = Date.now();
@@ -751,12 +769,16 @@ const renderSheetChunkToPdf = async ({
         error
       )}`
     );
-    return renderInlineChunkToPdf({
+    const fallbackTiming = await renderInlineChunkToPdf({
       page,
       sheets,
       extraStyles,
       outputPath,
     });
+    return {
+      ...fallbackTiming,
+      mode: "route-fallback-inline",
+    };
   }
 };
 
