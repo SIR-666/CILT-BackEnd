@@ -5,6 +5,7 @@ const {
   parseJsonArray,
   normalizeSourceType,
   normalizePackageType,
+  resolveV2ReportTitle,
   resolveSubmittedBy,
   resolveV2HeaderMeta,
   renderV2ReportHeader,
@@ -38,9 +39,19 @@ const {
   renderRobotPalletizerFillerDetailHtml,
 } = require("./robotPalletizerFillerRenderer");
 
+const PRINT_PAGE_NAME_BY_SIZE = {
+  "A4 portrait": "cilt-a4-portrait",
+  "A4 landscape": "cilt-a4-landscape",
+  "A3 landscape": "cilt-a3-landscape",
+};
+
+const resolveSheetPageName = (pageSize = "") =>
+  PRINT_PAGE_NAME_BY_SIZE[String(pageSize || "")] || "cilt-a4-portrait";
+
 const V2_PACKAGE_RENDERERS = Object.freeze({
   "REPORT CIP": ({ record }) => renderCipContentHtml(record),
-  "CHECKLIST CILT": ({ inspectionRows }) => renderChecklistTableHtml(inspectionRows),
+  "CHECKLIST CILT": ({ record, inspectionRows }) =>
+    renderChecklistTableHtml(inspectionRows, { date: record?.date }),
   SEGREGASI: ({ record, inspectionRows }) =>
     renderSegregasiDetailHtml(record, inspectionRows),
   "PEMAKAIAN SCREW CAP": ({ record }) => renderScrewCapDetailHtml(record),
@@ -116,11 +127,17 @@ const buildV2SheetFromRecord = ({
 }) => {
   const normalizedPackageType = normalizePackageType(packageType);
   const isCipSource = normalizeSourceType(sourceType) === "CIP";
-  const reportTitle = normalizedPackageType || (isCipSource ? "REPORT CIP" : "CILT REPORT");
-  const packageRenderer = resolvePackageRenderer(reportTitle);
+  const packageTypeKey =
+    normalizedPackageType || (isCipSource ? "REPORT CIP" : "CILT REPORT");
+  const reportTitle = isCipSource
+    ? "REPORT CIP"
+    : resolveV2ReportTitle(packageTypeKey) || "CILT REPORT";
+  const packageRenderer = resolvePackageRenderer(packageTypeKey);
 
-  const pageSize = isCipSource ? "A4 portrait" : resolveV2PageSizeByPackageType(reportTitle);
-  const meta = resolveV2HeaderMeta(reportTitle, headerMeta);
+  const pageSize = isCipSource
+    ? "A4 portrait"
+    : resolveV2PageSizeByPackageType(packageTypeKey);
+  const meta = resolveV2HeaderMeta(packageTypeKey, headerMeta);
   const inspectionRows = isCipSource
     ? parseJsonArray(record?.steps || record?.stepsData)
     : parseJsonArray(record?.inspectionData);
@@ -134,12 +151,12 @@ const buildV2SheetFromRecord = ({
   const generalInfoHtml = renderV2GeneralInfoTable({
     record,
     submittedBy,
-    packageType: reportTitle,
+    packageType: packageTypeKey,
   });
   const detailHtml = packageRenderer({
     record,
     inspectionRows,
-    packageType: reportTitle,
+    packageType: packageTypeKey,
   });
 
   const processOrder = isCipSource
@@ -149,7 +166,9 @@ const buildV2SheetFromRecord = ({
   return {
     pageSize,
     html: `
-      <section class="cilt-print-sheet" data-page-size="${escapeHtml(pageSize)}">
+      <section class="cilt-print-sheet" data-page-size="${escapeHtml(
+        pageSize
+      )}" style="page:${escapeHtml(resolveSheetPageName(pageSize))};">
         ${headerHtml}
         <div class="report-info">
           <p class="report-process-order"><strong>Process Order:</strong> ${escapeHtml(

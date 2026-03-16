@@ -22,6 +22,40 @@ const V2_PACKAGE_PAGE_SIZE_MAP = {
   "ROBOT PALLETIZER FILLER": "A4 landscape",
 };
 
+const V2_REPORT_TITLE_MAP = Object.freeze({
+  SEGREGASI: "SEGREGASI",
+  "A3 / FLEX": "LAPORAN MESIN A3 / FLEX",
+  "PENGECEKAN PRESSURE": "PENGECEKAN PRESSURE A3 / FLEX",
+  "START & FINISH": "START & FINISH PRODUKSI",
+  "PAPER A3": "PAPER A3",
+  "PEMAKAIAN H2O2 A3": "PEMAKAIAN H2O2 A3",
+  "PEMAKAIAN PAPER": "PEMAKAIAN PAPER",
+  "PEMAKAIAN SCREW CAP": "PEMAKAIAN SCREW CAP",
+  "PENGECEKAN H2O2 ( SPRAY )": "PENGECEKAN H2O2 (SPRAY)",
+  "LAPORAN ARTEMA & SMS CARDBOARD": "LAPORAN ARTEMA & SMS CARDBOARD",
+  "LAPORAN FRANS WP 25 CASE": "LAPORAN FRANS WP 25 CASE",
+  "ROBOT PALLETIZER FILLER": "ROBOT PALLETIZER FILLER",
+});
+
+const V2_GENERAL_INFO_PACKAGE_GROUP_ROW = new Set([
+  "PEMAKAIAN SCREW CAP",
+  "PEMAKAIAN PAPER",
+  "PENGECEKAN H2O2 ( SPRAY )",
+]);
+
+const V2_GENERAL_INFO_COMPACT_PACKAGES = new Set([
+  "A3 / FLEX",
+  "PENGECEKAN PRESSURE",
+  "LAPORAN ARTEMA & SMS CARDBOARD",
+  "LAPORAN FRANS WP 25 CASE",
+  "ROBOT PALLETIZER FILLER",
+]);
+
+const V2_GENERAL_INFO_SPLIT_PACKAGES = new Set([
+  "LAPORAN ARTEMA & SMS CARDBOARD",
+  "LAPORAN FRANS WP 25 CASE",
+]);
+
 const V2_HEADER_LOGO_SRC = (() => {
   const envLogoSrc = String(process.env.CILT_PDF_HEADER_LOGO_SRC || "").trim();
   if (envLogoSrc) return envLogoSrc;
@@ -212,6 +246,8 @@ const V2_RENDERER_STYLES = `
     margin: 0 0 6px;
     font-size: 11px;
     color: var(--v2-color-text);
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .general-info-table {
     width: 100%;
@@ -224,6 +260,8 @@ const V2_RENDERER_STYLES = `
     font-size: 10.5px;
     color: var(--v2-color-text);
     vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .section-title {
     font-weight: 700;
@@ -235,6 +273,7 @@ const V2_RENDERER_STYLES = `
   }
   .v2-table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
     font-size: 10px;
@@ -244,6 +283,9 @@ const V2_RENDERER_STYLES = `
     border: 1px solid var(--v2-color-border);
     padding: 5px 6px;
     vertical-align: top;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .v2-table th {
     background: var(--v2-color-header-bg);
@@ -347,6 +389,11 @@ const parseJsonArray = (value) => {
 
 const normalizeSourceType = (value) => (String(value ?? "") === "CIP" ? "CIP" : "CILT");
 const normalizePackageType = (value) => String(value ?? "");
+
+const resolveV2ReportTitle = (packageType = "") => {
+  const normalizedPackageType = normalizePackageType(packageType);
+  return V2_REPORT_TITLE_MAP[normalizedPackageType] || toDisplayText(normalizedPackageType, "");
+};
 
 const isMeaningfulSubmitterText = (value) => {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -476,32 +523,102 @@ const renderV2ReportHeader = ({ title, pageSize, headerMeta, normalizePageSize }
   `;
 };
 
-const renderV2GeneralInfoTable = ({ record, submittedBy, packageType }) => `
-  <table class="general-info-table">
-    <tbody>
-      <tr>
-        <td><strong>Date:</strong> ${escapeHtml(formatDateTimeForPrint(record?.date))}</td>
-        <td><strong>Product:</strong> ${escapeHtml(
-          toDisplayText(record?.product ?? record?.cipType, "")
-        )}</td>
-      </tr>
-      <tr>
-        <td><strong>Plant:</strong> ${escapeHtml(toDisplayText(record?.plant, ""))}</td>
-        <td><strong>Line:</strong> ${escapeHtml(toDisplayText(record?.line, ""))}</td>
-      </tr>
-      <tr>
-        <td><strong>Machine:</strong> ${escapeHtml(
-          toDisplayText(record?.machine ?? record?.posisi, "")
-        )}</td>
-        <td><strong>Shift:</strong> ${escapeHtml(toDisplayText(record?.shift, ""))}</td>
-      </tr>
-      <tr>
-        <td><strong>Submitted By:</strong> ${escapeHtml(toDisplayText(submittedBy, ""))}</td>
-        <td><strong>Package:</strong> ${escapeHtml(toDisplayText(packageType, ""))}</td>
-      </tr>
-    </tbody>
-  </table>
-`;
+const renderV2GeneralInfoTable = ({ record, submittedBy, packageType }) => {
+  const normalizedPackageType = normalizePackageType(packageType);
+  const usesPackageGroupRow = V2_GENERAL_INFO_PACKAGE_GROUP_ROW.has(normalizedPackageType);
+  const usesCompactInfoRows = V2_GENERAL_INFO_COMPACT_PACKAGES.has(normalizedPackageType);
+  const usesSplitInfoCells = V2_GENERAL_INFO_SPLIT_PACKAGES.has(normalizedPackageType);
+
+  const rows = [
+    [
+      { label: "Date", value: formatDateTimeForPrint(record?.date) },
+      { label: "Product", value: toDisplayText(record?.product ?? record?.cipType, "") },
+    ],
+    [
+      { label: "Plant", value: toDisplayText(record?.plant, "") },
+      { label: "Line", value: toDisplayText(record?.line, "") },
+    ],
+    [
+      { label: "Machine", value: toDisplayText(record?.machine ?? record?.posisi, "") },
+      { label: "Shift", value: toDisplayText(record?.shift, "") },
+    ],
+  ];
+
+  if (!usesCompactInfoRows) {
+    rows.push(
+      usesPackageGroupRow
+        ? [
+            { label: "Package", value: toDisplayText(normalizedPackageType, "") },
+            { label: "Group", value: "\u00A0" },
+          ]
+        : [
+            { label: "Submitted By", value: toDisplayText(submittedBy, "") },
+            { label: "Package", value: toDisplayText(normalizedPackageType, "") },
+          ]
+    );
+  }
+
+  if (usesSplitInfoCells) {
+    return `
+      <table class="general-info-table">
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  ${row
+                    .map(
+                      (cell) => `
+                        <td style="background:#f5f5f5; width:18%; font-weight:700;">
+                          ${escapeHtml(toDisplayText(cell?.label, ""))}:
+                        </td>
+                        <td style="width:32%;">
+                          ${
+                            cell?.value === "\u00A0"
+                              ? "\u00A0"
+                              : escapeHtml(toDisplayText(cell?.value, ""))
+                          }
+                        </td>
+                      `
+                    )
+                    .join("")}
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  return `
+    <table class="general-info-table">
+      <tbody>
+        ${rows
+          .map((row) => {
+            const leftCell = row[0] || {};
+            const rightCell = row[1] || {};
+            const leftValue =
+              leftCell?.value === "\u00A0"
+                ? "\u00A0"
+                : escapeHtml(toDisplayText(leftCell?.value, ""));
+            const rightValue =
+              rightCell?.value === "\u00A0"
+                ? "\u00A0"
+                : escapeHtml(toDisplayText(rightCell?.value, ""));
+
+            return `
+              <tr>
+                <td><strong>${escapeHtml(toDisplayText(leftCell?.label, ""))}:</strong> ${leftValue}</td>
+                <td><strong>${escapeHtml(toDisplayText(rightCell?.label, ""))}:</strong> ${rightValue}</td>
+              </tr>
+            `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+};
 
 const resolveV2PageSizeByPackageType = (packageType = "") =>
   V2_PACKAGE_PAGE_SIZE_MAP[normalizePackageType(packageType)] || "A4 portrait";
@@ -544,6 +661,7 @@ module.exports = {
   parseJsonArray,
   normalizeSourceType,
   normalizePackageType,
+  resolveV2ReportTitle,
   resolveSubmittedBy,
   resolveV2HeaderMeta,
   renderV2ReportHeader,

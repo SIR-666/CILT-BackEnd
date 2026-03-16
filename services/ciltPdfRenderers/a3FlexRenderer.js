@@ -23,30 +23,25 @@ const COUNTER_ROWS = [
   { label: "Incoming Package Counter 6", key: "incomingPackageCounter6" },
 ];
 
-const renderKeyValueTable = ({ title, rows = [] }) => `
-  <div style="min-width:0;">
-    <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
-      ${escapeHtml(title)}
-    </h3>
-    <table class="v2-table">
-      <tbody>
-        ${rows
-          .map(
-            (row) => `
-              <tr>
-                <td class="left" style="font-weight:600; background:#f8fafc; width:42%;">
-                  ${escapeHtml(row.label)}
-                </td>
-                <td class="center">
-                  ${escapeHtml(toDisplayText(row.value))}
-                </td>
-              </tr>
-            `
-          )
-          .join("")}
-      </tbody>
-    </table>
-  </div>
+const renderInfoTable = (rows = []) => `
+  <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+    <tbody>
+      ${rows
+        .map(
+          (row) => `
+            <tr>
+              <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:left; font-weight:600; background:#f8fafc; width:42%;">
+                ${escapeHtml(toDisplayText(row?.label, "-"))}
+              </td>
+              <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                ${escapeHtml(toDisplayText(row?.value, "-"))}
+              </td>
+            </tr>
+          `
+        )
+        .join("")}
+    </tbody>
+  </table>
 `;
 
 const renderA3FlexDetailHtml = (record = {}) => {
@@ -56,7 +51,8 @@ const renderA3FlexDetailHtml = (record = {}) => {
       ? primaryPayload.headerInfo
       : {};
   const persiapanProses =
-    primaryPayload?.persiapanProses && typeof primaryPayload.persiapanProses === "object"
+    primaryPayload?.persiapanProses &&
+    typeof primaryPayload.persiapanProses === "object"
       ? primaryPayload.persiapanProses
       : {};
   const counterPack =
@@ -78,7 +74,11 @@ const renderA3FlexDetailHtml = (record = {}) => {
     tanggal: headerInfo?.tanggal ?? "",
     namaProduk: headerInfo?.namaProduk ?? "",
     kemasan: headerInfo?.kemasan ?? "",
-    mesinLine: headerInfo?.mesinLine ?? headerInfo?.lineMesin ?? headerInfo?.mesin ?? "",
+    mesinLine:
+      headerInfo?.mesinLine ??
+      headerInfo?.lineMesin ??
+      headerInfo?.mesin ??
+      "",
     kodeProduksi: headerInfo?.kodeProduksi ?? "",
     kodeKadaluwarsa: headerInfo?.kodeKadaluwarsa ?? "",
   };
@@ -105,100 +105,120 @@ const renderA3FlexDetailHtml = (record = {}) => {
   ];
 
   return `
-    <p class="section-title">A3 / FLEX</p>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
-      ${renderKeyValueTable({
-        title: "INFORMASI PRODUK",
-        rows: [
-          {
-            label: "Hari / Tanggal",
-            value: [mergedHeaderInfo.hari, mergedHeaderInfo.tanggal]
-              .filter(Boolean)
-              .join(" / "),
-          },
-          { label: "Nama Produk", value: mergedHeaderInfo.namaProduk },
-          { label: "Mesin Line", value: mergedHeaderInfo.mesinLine },
-          { label: "Kemasan", value: mergedHeaderInfo.kemasan },
-          { label: "Kode Produksi", value: mergedHeaderInfo.kodeProduksi },
-          { label: "Kode Kadaluwarsa", value: mergedHeaderInfo.kodeKadaluwarsa },
-        ],
-      })}
-      <div style="min-width:0;">
-        <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
-          PERSIAPAN PROSES
-        </h3>
-        <table class="v2-table">
-          <thead>
-            <tr>
-              <th style="width:40%;">Parameter</th>
-              <th>1</th>
-              <th>2</th>
-              <th>3</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${PROCESS_ROWS.map(
-              (row) => `
-                <tr>
-                  <td class="left" style="font-weight:600; background:#f8fafc;">
-                    ${escapeHtml(row.label)}
-                  </td>
-                  <td class="center">${escapeHtml(toDisplayText(persiapanProses?.[`${row.key}`]))}</td>
-                  <td class="center">${escapeHtml(toDisplayText(persiapanProses?.[`${row.key}2`]))}</td>
-                  <td class="center">${escapeHtml(toDisplayText(persiapanProses?.[`${row.key}3`]))}</td>
-                </tr>
-              `
-            ).join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
-      ${renderKeyValueTable({
-        title: "DATA COUNTER PACK",
-        rows: COUNTER_ROWS.map((row) => ({
-          label: row.label,
-          value: counterPack?.[row.key],
-        })),
-      })}
-      <div style="min-width:0;">
-        <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
-          INKUBASI QUALITY CONTROL &amp; SAMPLE OPERATOR
-        </h3>
-        <table class="v2-table">
-          <thead>
-            <tr>
-              <th style="width:30%;">Inkubasi QC</th>
-              <th style="width:20%;">Value</th>
-              <th style="width:30%;">Sample Operator</th>
-              <th style="width:20%;">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${qualityRows
-              .map(
+    <div style="margin-top:8px;">
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <div style="flex:1; min-width:0;">
+          <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
+            INFORMASI PRODUK
+          </h3>
+          ${renderInfoTable([
+            {
+              label: "Hari / Tanggal",
+              value: [mergedHeaderInfo.hari, mergedHeaderInfo.tanggal]
+                .filter(Boolean)
+                .join(" / "),
+            },
+            { label: "Nama Produk", value: mergedHeaderInfo.namaProduk },
+            { label: "Mesin Line", value: mergedHeaderInfo.mesinLine },
+            { label: "Kemasan", value: mergedHeaderInfo.kemasan },
+            { label: "Kode Produksi", value: mergedHeaderInfo.kodeProduksi },
+            {
+              label: "Kode Kadaluwarsa",
+              value: mergedHeaderInfo.kodeKadaluwarsa,
+            },
+          ])}
+        </div>
+        <div style="flex:1; min-width:0;">
+          <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
+            PERSIAPAN PROSES
+          </h3>
+          <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+            <thead>
+              <tr>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7; width:40%;">Parameter</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7;">1</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7;">2</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7;">3</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${PROCESS_ROWS.map(
                 (row) => `
                   <tr>
-                    <td class="left" style="font-weight:600; background:#f8fafc;">${escapeHtml(
-                      row.leftLabel
-                    )}</td>
-                    <td class="center">${escapeHtml(toDisplayText(row.leftValue))}</td>
-                    <td class="left" style="font-weight:600; background:#f8fafc;">${escapeHtml(
-                      row.rightLabel
-                    )}</td>
-                    <td class="center">${escapeHtml(toDisplayText(row.rightValue))}</td>
+                    <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:left; font-weight:600; background:#f8fafc;">
+                      ${escapeHtml(row.label)}
+                    </td>
+                    <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                      ${escapeHtml(toDisplayText(persiapanProses[`${row.key}`], "-"))}
+                    </td>
+                    <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                      ${escapeHtml(toDisplayText(persiapanProses[`${row.key}2`], "-"))}
+                    </td>
+                    <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                      ${escapeHtml(toDisplayText(persiapanProses[`${row.key}3`], "-"))}
+                    </td>
                   </tr>
                 `
-              )
-              .join("")}
-          </tbody>
-        </table>
-        <div style="border:1px solid #000; border-top:none; background:#f8fafc; padding:8px 10px;">
-          <div style="text-align:center; font-weight:600; margin-bottom:4px; font-size:10px;">
-            Total Inkubasi QC &amp; Sample Operator
-          </div>
-          <div style="text-align:center; border:1px solid #cbd5e1; background:#fff; padding:4px; min-height:16px; font-size:10px;">
-            ${escapeHtml(toDisplayText(sampleOperator?.totalInkubasiDanSample))}
+              ).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <div style="flex:1; min-width:0;">
+          <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
+            DATA COUNTER PACK
+          </h3>
+          ${renderInfoTable(
+            COUNTER_ROWS.map((row) => ({
+              label: row.label,
+              value: counterPack[row.key],
+            }))
+          )}
+        </div>
+        <div style="flex:1; min-width:0;">
+          <h3 style="text-align:center; font-weight:700; font-size:13px; margin:8px 0 6px; color:#0f172a; background:#eef3f7; border:1px solid #cbd5e1; padding:6px 8px; border-radius:6px;">
+            INKUBASI QUALITY CONTROL &amp; SAMPLE OPERATOR
+          </h3>
+          <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+            <thead>
+              <tr>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7; width:30%;">Inkubasi QC</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7; width:20%;">Value</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7; width:30%;">Sample Operator</th>
+                <th style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; background:#eef3f7; width:20%;">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${qualityRows
+                .map(
+                  (row) => `
+                    <tr>
+                      <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:left; font-weight:600; background:#f8fafc;">
+                        ${escapeHtml(row.leftLabel)}
+                      </td>
+                      <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                        ${escapeHtml(toDisplayText(row.leftValue, "-"))}
+                      </td>
+                      <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:left; font-weight:600; background:#f8fafc;">
+                        ${escapeHtml(row.rightLabel)}
+                      </td>
+                      <td style="border:0.5px solid #1f2933; padding:4px 6px; font-size:10px; text-align:center;">
+                        ${escapeHtml(toDisplayText(row.rightValue, "-"))}
+                      </td>
+                    </tr>
+                  `
+                )
+                .join("")}
+            </tbody>
+          </table>
+          <div style="border:0.5px solid #1f2933; border-top:none; background:#f8fafc; padding:8px 10px;">
+            <div style="text-align:center; font-weight:600; margin-bottom:4px; font-size:10px;">
+              Total Inkubasi QC &amp; Sample Operator
+            </div>
+            <div style="text-align:center; border:0.5px solid #cbd5e1; background:#fff; padding:4px; min-height:16px; font-size:10px;">
+              ${escapeHtml(toDisplayText(sampleOperator?.totalInkubasiDanSample, "-"))}
+            </div>
           </div>
         </div>
       </div>

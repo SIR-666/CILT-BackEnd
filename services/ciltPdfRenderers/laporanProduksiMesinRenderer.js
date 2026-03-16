@@ -1,9 +1,4 @@
-const {
-  escapeHtml,
-  parseJsonArray,
-  renderV2EmptyBlock,
-  toDisplayText,
-} = require("./rendererShared");
+const { escapeHtml, parseJsonArray, toDisplayText } = require("./rendererShared");
 
 const COMBI_XG_HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) =>
   String(hour).padStart(2, "0")
@@ -67,9 +62,11 @@ const resolveItemValue = (
 
 const getPrimaryPayload = (record = {}) => {
   const inspectionRows = parseJsonArray(record?.inspectionData);
-  return inspectionRows.find(
-    (row) => row && typeof row === "object" && !Array.isArray(row)
-  ) || {};
+  return (
+    inspectionRows.find(
+      (row) => row && typeof row === "object" && !Array.isArray(row)
+    ) || {}
+  );
 };
 
 const buildGroupedSections = (payload = {}) => {
@@ -103,11 +100,7 @@ const buildRangeHint = (paramItem = {}) =>
 const evaluateStatus = (paramItem = {}, rawValue) => {
   const parsedValue = parseFloat(rawValue);
   if (!Number.isFinite(parsedValue)) {
-    return {
-      label: "-",
-      color: "#6b7280",
-      background: "#ffffff",
-    };
+    return { label: "-", statusColor: "#666", cellBg: "#fff" };
   }
 
   if (
@@ -120,8 +113,8 @@ const evaluateStatus = (paramItem = {}, rawValue) => {
     const isOk = parsedValue >= paramItem.min_value && parsedValue <= paramItem.max_value;
     return {
       label: isOk ? "OK" : "NOT OK",
-      color: isOk ? "#166534" : "#b91c1c",
-      background: isOk ? "#dcfce7" : "#fee2e2",
+      statusColor: isOk ? "#2e7d32" : "#d32f2f",
+      cellBg: isOk ? "#e8f5e9" : "#ffebee",
     };
   }
 
@@ -133,81 +126,96 @@ const evaluateStatus = (paramItem = {}, rawValue) => {
     const isOk = parsedValue === paramItem.exact_value;
     return {
       label: isOk ? "OK" : "NOT OK",
-      color: isOk ? "#166534" : "#b91c1c",
-      background: isOk ? "#dcfce7" : "#fee2e2",
+      statusColor: isOk ? "#2e7d32" : "#d32f2f",
+      cellBg: isOk ? "#e8f5e9" : "#ffebee",
     };
   }
 
-  return {
-    label: "-",
-    color: "#6b7280",
-    background: "#ffffff",
-  };
+  return { label: "-", statusColor: "#666", cellBg: "#fff" };
 };
 
 const renderMachineSectionTable = ({
-  titlePrefix,
   sectionName,
   sectionRows = [],
   values = {},
   payloadPage = 1,
 }) => {
-  const hourHeaders = COMBI_XG_HOUR_OPTIONS.map(
-    (hour) => `<th style="width:42px;">${escapeHtml(hour)}:00</th>`
-  ).join("");
-
-  const bodyRows = sectionRows
-    .map((paramItem) => {
-      const rangeHint = buildRangeHint(paramItem);
-      const parameterCell = `
-        <td class="left" style="min-width:180px;">
-          <div>${escapeHtml(toDisplayText(paramItem?.parameter_name))}</div>
-          ${
-            rangeHint
-              ? `<div style="margin-top:2px; font-size:9px; color:#6b7280;">${escapeHtml(
-                  rangeHint
-                )}</div>`
-              : ""
-          }
-        </td>
-      `;
-
-      const hourCells = COMBI_XG_HOUR_OPTIONS.map((hour) => {
-        const resolved = resolveItemValue(values, paramItem, hour, payloadPage, {
-          strictHour: true,
-        });
-        const status = evaluateStatus(paramItem, resolved.statusValue);
-        return `
-          <td class="center" style="background:${status.background};">
-            <div>${escapeHtml(toDisplayText(resolved.displayValue))}</div>
-            <div style="margin-top:2px; color:${status.color}; font-weight:700;">${escapeHtml(
-              status.label
-            )}</div>
-          </td>
-        `;
-      }).join("");
-
-      return `<tr>${parameterCell}${hourCells}</tr>`;
-    })
-    .join("");
+  const machineHours = COMBI_XG_HOUR_OPTIONS;
+  const isDenseMachineHourTable = machineHours.length >= 20;
+  const machineParamColumnPercent = isDenseMachineHourTable ? 16 : 22;
+  const machineHourColumnPercent =
+    (100 - machineParamColumnPercent) / Math.max(machineHours.length, 1);
+  const machinePrintFontSize = isDenseMachineHourTable ? "6.2px" : "8px";
 
   return `
-    <p class="section-title">${escapeHtml(titlePrefix)} - ${escapeHtml(sectionName)}</p>
-    <table class="v2-table" style="font-size:8.2px;">
-      <thead>
-        <tr>
-          <th style="min-width:180px; text-align:left;">Parameter</th>
-          ${hourHeaders}
-        </tr>
-      </thead>
-      <tbody>
-        ${bodyRows}
-      </tbody>
-    </table>
+    <div style="margin-bottom:10px;">
+      <div style="font-weight:700; background-color:#eef5ef; padding:6px 8px; margin:10px 0 5px; border-left:3px solid #2e7d32; font-size:10px;">
+        ${escapeHtml(toDisplayText(sectionName, "-"))}
+      </div>
+      <div>
+        <table style="border-collapse:collapse; margin:8px 0; font-size:${machinePrintFontSize}; width:100%; table-layout:fixed;">
+          <thead>
+            <tr>
+              <th style="border:1px solid #ccc; padding:3px; text-align:left; background-color:#e7f2ed; width:${machineParamColumnPercent}%;">
+                Parameter
+              </th>
+              ${machineHours
+                .map(
+                  (hour) => `
+                    <th style="border:1px solid #ccc; padding:3px 1px; text-align:center; background-color:#e7f2ed; width:${machineHourColumnPercent}%; white-space:nowrap;">
+                      ${escapeHtml(hour)}:00
+                    </th>
+                  `
+                )
+                .join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${sectionRows
+              .map((paramItem) => {
+                const rangeHint = buildRangeHint(paramItem);
+                return `
+                  <tr>
+                    <td style="border:1px solid #ccc; padding:3px; text-align:left; vertical-align:top; word-break:break-word;">
+                      <div>${escapeHtml(toDisplayText(paramItem?.parameter_name, "-"))}</div>
+                      ${
+                        rangeHint
+                          ? `<small style="color:#777; line-height:1.2;">${escapeHtml(rangeHint)}</small>`
+                          : ""
+                      }
+                    </td>
+                    ${machineHours
+                      .map((hour) => {
+                        const resolved = resolveItemValue(
+                          values,
+                          paramItem,
+                          hour,
+                          payloadPage,
+                          { strictHour: true }
+                        );
+                        const status = evaluateStatus(paramItem, resolved.statusValue);
+                        return `
+                          <td style="border:1px solid #ccc; padding:3px 1px; text-align:center; background-color:${status.cellBg}; vertical-align:top;">
+                            <div>${escapeHtml(toDisplayText(resolved.displayValue, "-"))}</div>
+                            <div style="margin-top:2px; font-weight:700; color:${status.statusColor};">
+                              ${escapeHtml(toDisplayText(status.label, "-"))}
+                            </div>
+                          </td>
+                        `;
+                      })
+                      .join("")}
+                  </tr>
+                `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
   `;
 };
 
-const renderMachineSections = ({ record = {}, titlePrefix }) => {
+const renderMachineSections = ({ record = {} }) => {
   const payload = getPrimaryPayload(record);
   const grouped = buildGroupedSections(payload);
   const values =
@@ -215,28 +223,31 @@ const renderMachineSections = ({ record = {}, titlePrefix }) => {
   const payloadPage = normalizePageNumber(payload?.page, 1);
   const sections = Object.keys(grouped);
 
-  if (sections.length === 0) {
-    return renderV2EmptyBlock();
-  }
-
-  return sections
-    .map((sectionName) =>
-      renderMachineSectionTable({
-        titlePrefix,
-        sectionName,
-        sectionRows: Array.isArray(grouped[sectionName]) ? grouped[sectionName] : [],
-        values,
-        payloadPage,
-      })
-    )
-    .join("\n");
+  return `
+    <div style="margin-top:10px;">
+      <h3 style="font-weight:700; background-color:#d9f0e3; padding:8px 10px; margin:15px 0 8px; font-size:12px; color:#2f5d43;">
+        MACHINE CHECK PARAMETERS
+      </h3>
+      ${
+        sections.length === 0
+          ? '<p style="text-align:center; color:#666; font-size:10px;">No machine check data</p>'
+          : sections
+              .map((sectionName) =>
+                renderMachineSectionTable({
+                  sectionName,
+                  sectionRows: Array.isArray(grouped[sectionName]) ? grouped[sectionName] : [],
+                  values,
+                  payloadPage,
+                })
+              )
+              .join("")
+      }
+    </div>
+  `;
 };
 
 const renderLaporanProduksiMesinDetailHtml = (record = {}) =>
-  renderMachineSections({
-    record,
-    titlePrefix: "MACHINE CHECK PARAMETERS",
-  });
+  renderMachineSections({ record });
 
 module.exports = {
   renderLaporanProduksiMesinDetailHtml,

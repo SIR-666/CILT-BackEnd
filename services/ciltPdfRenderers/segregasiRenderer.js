@@ -62,6 +62,7 @@ const mergeSegregasiRows = (record = {}, inspectionRows = []) => {
   const descriptionRows = normalizeRows(record?.descriptionData);
   const descriptionMetaRows = normalizeRows(record?.descriptionDataWithMeta);
   const remarksRows = normalizeRows(record?.remarks).filter(isSegregasiRowFilled);
+
   const totalRows = Math.max(
     rowsFromInspection.length,
     descriptionRows.length,
@@ -80,7 +81,88 @@ const mergeSegregasiRows = (record = {}, inspectionRows = []) => {
   return filledRows.length > 0 ? filledRows : mergedRows;
 };
 
-const toYesNo = (value) => (value === true ? "Ya" : "");
+const renderInfoTable = (rows = []) => `
+  <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+    <tbody>
+      ${rows
+        .map(
+          (row) => `
+            <tr>
+              <td style="border:1px solid #e5e7eb; background:#f8fafc; color:#374151; font-size:10px; font-weight:600; padding:3px 5px; width:34%;">
+                ${escapeHtml(toDisplayText(row?.label, "-"))}
+              </td>
+              <td style="border:1px solid #e5e7eb; color:#111827; font-size:10px; padding:3px 5px; word-break:break-word;">
+                ${escapeHtml(toDisplayText(row?.value, "-"))}
+              </td>
+            </tr>
+          `
+        )
+        .join("")}
+    </tbody>
+  </table>
+`;
+
+const renderSegregasiCard = (row = {}, index = 0) => {
+  const resolvedType = toDisplayText(row?.type || row?.job_type, "-");
+  const isChangeVariant =
+    String(resolvedType).trim().toLowerCase() === "change variant";
+  const auditUser = toDisplayText(row?.user || row?.lastModifiedBy, "-");
+  const auditTime = toDisplayText(row?.time || row?.lastModifiedTime, "-");
+
+  return `
+    <div style="border:1px solid #d1d5db; border-radius:6px; padding:7px; background:#ffffff; line-height:1.15; break-inside:avoid; page-break-inside:avoid;">
+      <div style="text-align:center; font-size:11px; font-weight:700; color:#1f2937; background:#f8fafc; border:1px solid #e5e7eb; border-radius:4px; padding:4px 6px; margin-bottom:6px;">
+        Entry ${index + 1}
+      </div>
+
+      <div style="margin-bottom:6px;">
+        <div style="font-size:9px; font-weight:700; color:#166534; margin-bottom:4px;">Segregasi</div>
+        ${renderInfoTable([
+          { label: "Type", value: resolvedType },
+          { label: "Prod Type", value: toDisplayText(row?.prodType, "-") },
+          { label: "TO", value: isChangeVariant ? toDisplayText(row?.to, "-") : "—" },
+        ])}
+      </div>
+
+      <div style="margin-bottom:6px;">
+        <div style="font-size:10px; font-weight:700; color:#166534; margin-bottom:4px;">Description</div>
+        ${renderInfoTable([
+          { label: "Flavour", value: toDisplayText(row?.flavour, "-") },
+          { label: "Kode Prod.", value: toDisplayText(row?.kodeProd, "-") },
+          { label: "Kode Exp", value: toDisplayText(row?.kodeExp, "-") },
+          { label: "Start", value: toDisplayText(row?.startTime, "-") },
+          { label: "Stop", value: toDisplayText(row?.stopTime, "-") },
+          { label: "Outfeed", value: toDisplayText(row?.counterOutfeed, "-") },
+          { label: "Total Outfeed", value: toDisplayText(row?.totalOutfeed, "-") },
+          { label: "Waste", value: toDisplayText(row?.waste, "-") },
+          { label: "Start Hours", value: toDisplayText(row?.startNum, "-") },
+          { label: "Stop Hours", value: toDisplayText(row?.stopNum, "-") },
+        ])}
+      </div>
+
+      <div style="margin-bottom:6px;">
+        <div style="font-size:10px; font-weight:700; color:#166534; margin-bottom:4px;">Equipment Status</div>
+        ${renderInfoTable([
+          { label: "Magazine", value: row?.magazine ? "Ya" : "-" },
+          { label: "Wastafel", value: row?.wastafel ? "Ya" : "-" },
+          { label: "Pallet PM", value: row?.palletPm ? "Ya" : "-" },
+          { label: "Conveyor", value: row?.conveyor ? "Ya" : "-" },
+        ])}
+      </div>
+
+      ${
+        row?.user || row?.time || row?.lastModifiedBy || row?.lastModifiedTime
+          ? `
+            <div style="padding-top:5px; border-top:1px solid #e5e7eb; font-size:9px; color:#6b7280;">
+              <div>User: ${escapeHtml(auditUser)}</div>
+              <div>Time: ${escapeHtml(auditTime)}</div>
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+};
 
 const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
   const sourceRows =
@@ -93,82 +175,50 @@ const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
     return renderV2EmptyBlock();
   }
 
-  const rowMarkup = rows
-    .map((row, index) => {
-      const typeValue = toDisplayText(row?.type || row?.job_type);
-      const isChangeVariant =
-        String(typeValue || "")
-          .trim()
-          .toLowerCase() === "change variant";
-      const toVariantValue = isChangeVariant ? toDisplayText(row?.to, "") : "";
-      const auditUser = toDisplayText(row?.user || row?.lastModifiedBy);
-      const auditTime = toDisplayText(row?.time || row?.lastModifiedTime);
+  const pageGroups = [];
+  for (let index = 0; index < rows.length; index += 3) {
+    pageGroups.push(rows.slice(index, index + 3));
+  }
+
+  const pagesHtml = pageGroups
+    .map((pageRows, pageIndex) => {
+      const pageColumnCount = Math.min(3, Math.max(1, pageRows.length));
+      const paddedRows =
+        pageRows.length < pageColumnCount
+          ? [
+              ...pageRows,
+              ...Array.from({ length: pageColumnCount - pageRows.length }, () => null),
+            ]
+          : pageRows;
 
       return `
-        <tr>
-          <td class="center">${index + 1}</td>
-          <td class="left">${escapeHtml(typeValue)}</td>
-          <td class="left">${escapeHtml(toDisplayText(row?.prodType))}</td>
-          <td class="left">${escapeHtml(toVariantValue)}</td>
-          <td class="left">${escapeHtml(toDisplayText(row?.flavour))}</td>
-          <td class="left">${escapeHtml(toDisplayText(row?.kodeProd))}</td>
-          <td class="left">${escapeHtml(toDisplayText(row?.kodeExp))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.startTime))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.stopTime))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.counterOutfeed))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.totalOutfeed))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.waste))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.startNum))}</td>
-          <td class="center">${escapeHtml(toDisplayText(row?.stopNum))}</td>
-          <td class="center">${escapeHtml(toYesNo(row?.magazine))}</td>
-          <td class="center">${escapeHtml(toYesNo(row?.wastafel))}</td>
-          <td class="center">${escapeHtml(toYesNo(row?.palletPm))}</td>
-          <td class="center">${escapeHtml(toYesNo(row?.conveyor))}</td>
-          <td class="left">${escapeHtml(auditUser)}</td>
-          <td class="center">${escapeHtml(auditTime)}</td>
-        </tr>
+        <div ${
+          pageIndex === 0
+            ? ""
+            : 'style="page-break-before:always; break-before:page; padding-top:6px;"'
+        }>
+          <div style="display:grid; grid-template-columns:repeat(${pageColumnCount}, minmax(0, 1fr)); gap:6px; align-items:start;">
+            ${paddedRows
+              .map((row, columnIndex) => {
+                const absoluteIndex = pageIndex * 3 + columnIndex;
+                return `
+                  <div style="min-width:0;">
+                    ${
+                      row
+                        ? renderSegregasiCard(row, absoluteIndex)
+                        : '<div style="min-height:1px;"></div>'
+                    }
+                  </div>
+                `;
+              })
+              .join("")}
+          </div>
+        </div>
       `;
     })
     .join("");
 
-  return `
-    <p class="section-title">SEGREGASI</p>
-    <table class="v2-table">
-      <thead>
-        <tr>
-          <th rowspan="2" style="width:4%;">No</th>
-          <th colspan="3">Segregasi</th>
-          <th colspan="10">Description</th>
-          <th colspan="4">Equipment</th>
-          <th colspan="2">Audit</th>
-        </tr>
-        <tr>
-          <th style="width:10%; text-align:left;">Type</th>
-          <th style="width:10%; text-align:left;">Prod Type</th>
-          <th style="width:8%; text-align:left;">TO</th>
-          <th style="width:8%; text-align:left;">Flavour</th>
-          <th style="width:8%; text-align:left;">Kode Prod</th>
-          <th style="width:8%; text-align:left;">Kode Exp</th>
-          <th style="width:6%;">Start</th>
-          <th style="width:6%;">Stop</th>
-          <th style="width:7%;">Outfeed</th>
-          <th style="width:7%;">Total Outfeed</th>
-          <th style="width:6%;">Waste</th>
-          <th style="width:6%;">Start Num</th>
-          <th style="width:6%;">Stop Num</th>
-          <th style="width:6%;">Magazine</th>
-          <th style="width:6%;">Wastafel</th>
-          <th style="width:6%;">Pallet PM</th>
-          <th style="width:6%;">Conveyor</th>
-          <th style="width:8%; text-align:left;">User</th>
-          <th style="width:8%;">Time</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowMarkup}
-      </tbody>
-    </table>
-  `;
+  return `<div style="padding-bottom:6px;">${pagesHtml}</div>`;
 };
 
 module.exports = { renderSegregasiDetailHtml };

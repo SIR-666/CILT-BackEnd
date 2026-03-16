@@ -1,4 +1,4 @@
-const { escapeHtml, renderV2EmptyRow, toDisplayText } = require("./rendererShared");
+const { escapeHtml, toDisplayText } = require("./rendererShared");
 const {
   filterRowsByFields,
   getValueByExactKey,
@@ -9,59 +9,98 @@ const {
 const renderPaperUsageDetailHtml = (record = {}) => {
   const inspectionRows = resolveInspectionRows(record);
   const rows = filterRowsByFields(inspectionRows, ["jam", "boxNo", "pdPaper", "qtyLabel"]);
-  const cekAlergenKemasan =
-    Array.isArray(inspectionRows) &&
-    inspectionRows.some(
-      (row) =>
-        isCheckedMarker(getValueByExactKey(row, "cekAlergenKemasan")) ||
-        isCheckedMarker(getValueByExactKey(row, "cekLabelAlergenKemasan"))
-    );
+  const cekAlergenKemasan = Array.isArray(inspectionRows)
+    ? inspectionRows.some(
+        (row) =>
+          isCheckedMarker(getValueByExactKey(row, "cekAlergenKemasan")) ||
+          isCheckedMarker(getValueByExactKey(row, "cekLabelAlergenKemasan"))
+      )
+    : false;
+
+  const columns = [
+    { label: "No", width: "5%", minWidth: "40px", align: "center" },
+    { label: "Jam", width: "15%", minWidth: "100px", align: "center" },
+    { label: "Box No.", width: "20%", minWidth: "80px", align: "center" },
+    { label: "PD. Paper", width: "20%", minWidth: "90px", align: "center" },
+    { label: "Qty Label", width: "20%", minWidth: "100px", align: "center" },
+    { label: "User", width: "10%", minWidth: "80px", align: "center" },
+    { label: "Time", width: "10%", minWidth: "50px", align: "center" },
+  ];
 
   const bodyRows =
     rows.length === 0
-      ? renderV2EmptyRow({ colspan: 7 })
+      ? `
+        <tr>
+          <td colspan="${columns.length}" style="padding:20px 8px; text-align:center; color:#666; font-style:italic; border:1px solid #000;">
+            Tidak ada data yang diinput
+          </td>
+        </tr>
+      `
       : rows
           .map(
-            (row, index) => `
-              <tr>
-                <td class="center">${index + 1}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "jam"), ""))}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "boxNo"), ""))}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "pdPaper"), ""))}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "qtyLabel"), ""))}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "user"), ""))}</td>
-                <td class="center">${escapeHtml(toDisplayText(getValueByExactKey(row, "time"), ""))}</td>
+            (row, rowIndex) => `
+              <tr style="break-inside:avoid; page-break-inside:avoid;">
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${rowIndex + 1}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "jam"), ""))}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "boxNo"), ""))}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "pdPaper"), ""))}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "qtyLabel"), ""))}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "user"), ""))}
+                </td>
+                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                  ${escapeHtml(toDisplayText(getValueByExactKey(row, "time"), ""))}
+                </td>
               </tr>
             `
           )
           .join("");
 
   return `
-    <p class="section-title">PEMAKAIAN PAPER</p>
-    <div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin:6px 0 8px;">
-      <span style="width:14px; height:14px; border:2px solid #111; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:700;">
-        ${cekAlergenKemasan ? "v" : ""}
-      </span>
-      <span style="font-weight:700; font-size:10px; color:#111827;">CEK LABEL ALERGEN KEMASAN</span>
+    <div style="margin-top:10px; margin-bottom:14px; break-inside:auto; page-break-inside:auto;">
+      <div style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center; margin:8px 0;">
+        <div></div>
+        <div style="justify-self:end; display:flex; align-items:center; gap:8px;">
+          <div style="width:14px; height:14px; border:2px solid #111; display:flex; align-items:center; justify-content:center; font-size:10px; line-height:1;">
+            ${cekAlergenKemasan ? "✔" : ""}
+          </div>
+          <span style="font-weight:700; color:#111827; font-size:10px;">
+            CEK LABEL ALERGEN KEMASAN
+          </span>
+        </div>
+      </div>
+      <div style="position:relative; margin-top:8px;">
+        <table style="position:relative; z-index:1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px;">
+          <thead>
+            <tr>
+              ${columns
+                .map(
+                  (column) => `
+                    <th style="width:${column.width}; min-width:${column.minWidth}; padding:12px 8px; text-align:${column.align}; border:1px solid #000; background:#f2f2f2; color:#111827; white-space:normal; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                      ${column.label}
+                    </th>
+                  `
+                )
+                .join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${bodyRows}
+          </tbody>
+        </table>
+      </div>
     </div>
-    <table class="v2-table">
-      <thead>
-        <tr>
-          <th style="width:5%;">No</th>
-          <th style="width:15%;">Jam</th>
-          <th style="width:20%;">Box No.</th>
-          <th style="width:20%;">PD. Paper</th>
-          <th style="width:20%;">Qty Label</th>
-          <th style="width:10%;">User</th>
-          <th style="width:10%;">Time</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${bodyRows}
-      </tbody>
-    </table>
   `;
 };
 
 module.exports = { renderPaperUsageDetailHtml };
-

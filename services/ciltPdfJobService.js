@@ -493,6 +493,50 @@ const normalizePathname = (urlValue) => {
   }
 };
 
+const upsertHtmlAttr = (attrs = "", attrName = "", attrValue = "") => {
+  const attrRegex = new RegExp(
+    `\\s${String(attrName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=(["'])([\\s\\S]*?)\\1`,
+    "i"
+  );
+  if (attrRegex.test(attrs)) {
+    return attrs.replace(attrRegex, ` ${attrName}="${String(attrValue)}"`);
+  }
+  return `${attrs} ${attrName}="${String(attrValue)}"`;
+};
+
+const upsertPageStyleAttr = (attrs = "", pageName = "") => {
+  const styleRegex = /\sstyle=(["'])([\s\S]*?)\1/i;
+  if (!styleRegex.test(attrs)) {
+    return `${attrs} style="page:${String(pageName)};"`;
+  }
+
+  return attrs.replace(styleRegex, (fullMatch, quote, styleValue) => {
+    const cleaned = String(styleValue)
+      .replace(/(?:^|;)\s*page\s*:\s*[^;]+;?/gi, ";")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^;+|;+$/g, "");
+    const prefix = cleaned ? `${cleaned}; ` : "";
+    return ` style="${prefix}page:${String(pageName)};"`;
+  });
+};
+
+const ensureSheetPageMarkup = (rawHtml, { sizeKey, pageName }) => {
+  const safeHtml = String(rawHtml || "").trim();
+  if (!safeHtml) return "";
+  const sectionRegex = /<section([^>]*class=["'][^"']*\bcilt-print-sheet\b[^"']*["'][^>]*)>/i;
+  if (!sectionRegex.test(safeHtml)) {
+    return `<section class="cilt-print-sheet" data-page-size="${sizeKey}" style="page:${pageName};">${safeHtml}</section>`;
+  }
+
+  return safeHtml.replace(sectionRegex, (fullMatch, attrs) => {
+    let nextAttrs = attrs;
+    nextAttrs = upsertHtmlAttr(nextAttrs, "data-page-size", sizeKey);
+    nextAttrs = upsertPageStyleAttr(nextAttrs, pageName);
+    return `<section${nextAttrs}>`;
+  });
+};
+
 const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
   const pageRules = Object.values(PAGE_SIZE_CONFIG)
     .map(
@@ -506,10 +550,7 @@ const buildInlinePrintHtmlDocument = ({ sheets = [], extraStyles = "" }) => {
       const pageName = PAGE_SIZE_CONFIG[sizeKey].pageName;
       const rawHtml = stripScriptTags(sheet?.html || "").trim();
       if (!rawHtml) return "";
-      if (/class=["'][^"']*cilt-print-sheet[^"']*["']/i.test(rawHtml)) {
-        return rawHtml;
-      }
-      return `<section class="cilt-print-sheet" data-page-size="${sizeKey}" style="page:${pageName};">${rawHtml}</section>`;
+      return ensureSheetPageMarkup(rawHtml, { sizeKey, pageName });
     })
     .filter(Boolean)
     .join("\n");
