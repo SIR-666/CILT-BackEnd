@@ -4,34 +4,27 @@ const ciltPdfJobService = require("../services/ciltPdfJobService");
 
 ciltPdfJobService.ensureCleanupLoop();
 
-router.post("/", async (req, res) => {
-  try {
-    const { fileName, sheets, extraStyles, requestedBy, chunkSize, printBaseUrl, renderMode } =
-      req.body || {};
-    const created = ciltPdfJobService.createJob({
-      fileName,
-      sheets,
-      extraStyles,
-      requestedBy,
-      chunkSize,
-      printBaseUrl,
-      renderMode,
-    });
-    return res.status(202).json(created);
-  } catch (error) {
-    const statusCode = Number(error?.statusCode) || 500;
-    return res.status(statusCode).json({
-      error: error?.message || "Failed to create PDF job.",
-    });
-  }
-});
+const isInlineDownload = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+};
+
+const sanitizeDownloadFileName = (value, fallback = "cilt-export.pdf") => {
+  const base = String(value || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|\r\n]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const withExt = base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+  return withExt || fallback;
+};
 
 router.post("/v2", async (req, res) => {
   try {
     const {
       fileName,
       items,
-      extraStyles,
       requestedBy,
       chunkSize,
       printBaseUrl,
@@ -41,7 +34,6 @@ router.post("/v2", async (req, res) => {
     const created = await ciltPdfJobService.createJobFromItems({
       fileName,
       items,
-      extraStyles,
       requestedBy,
       chunkSize,
       printBaseUrl,
@@ -105,13 +97,11 @@ router.get("/:jobId/download", (req, res) => {
     });
   }
 
-  const inline =
-    String(req.query.inline || "").toLowerCase() === "1" ||
-    String(req.query.inline || "").toLowerCase() === "true";
-  const fileNameRaw = String(req.query.fileName || job.fileName || "cilt-export.pdf");
-  const fileName = fileNameRaw.toLowerCase().endsWith(".pdf")
-    ? fileNameRaw
-    : `${fileNameRaw}.pdf`;
+  const inline = isInlineDownload(req.query.inline);
+  const fileName = sanitizeDownloadFileName(
+    req.query.fileName,
+    String(job.fileName || "ciltpro-export.pdf")
+  );
   const dispositionType = inline ? "inline" : "attachment";
 
   res.setHeader("Content-Type", "application/pdf");
