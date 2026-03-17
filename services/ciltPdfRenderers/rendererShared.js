@@ -436,10 +436,40 @@ const resolveSubmittedBy = ({ record, inspectionRows = [] }) => {
   return "";
 };
 
+const parseDateForPrint = (value) => {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === "number") {
+    const numericDate = new Date(value);
+    return Number.isNaN(numericDate.getTime()) ? null : numericDate;
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  let parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  parsed = new Date(raw.replace(" ", "T"));
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  const dmyMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy, hh = "00", min = "00", ss = "00"] = dmyMatch;
+    parsed = new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  return null;
+};
+
 const formatDateTimeForPrint = (value) => {
-  if (!value) return "";
-  const parsed = new Date(String(value).replace(" ", "T"));
-  if (Number.isNaN(parsed.getTime())) return "";
+  const parsed = parseDateForPrint(value);
+  if (!parsed) return "";
   const day = String(parsed.getDate()).padStart(2, "0");
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   const year = String(parsed.getFullYear()).slice(-2);
@@ -528,10 +558,16 @@ const renderV2GeneralInfoTable = ({ record, submittedBy, packageType }) => {
   const usesPackageGroupRow = V2_GENERAL_INFO_PACKAGE_GROUP_ROW.has(normalizedPackageType);
   const usesCompactInfoRows = V2_GENERAL_INFO_COMPACT_PACKAGES.has(normalizedPackageType);
   const usesSplitInfoCells = V2_GENERAL_INFO_SPLIT_PACKAGES.has(normalizedPackageType);
+  const resolvedPrintDateValue =
+    record?.date ??
+    record?.Date ??
+    record?.submitTime ??
+    record?.createdAt ??
+    record?.updatedAt;
 
   const rows = [
     [
-      { label: "Date", value: formatDateTimeForPrint(record?.date) },
+      { label: "Date", value: formatDateTimeForPrint(resolvedPrintDateValue) },
       { label: "Product", value: toDisplayText(record?.product ?? record?.cipType, "") },
     ],
     [
