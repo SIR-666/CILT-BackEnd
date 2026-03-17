@@ -24,6 +24,11 @@ function hasMeaningfulData(inspectionData) {
     return inspection.length > 0;
 }
 
+function isDuplicateKeyError(error) {
+    const number = Number(error?.number || error?.originalError?.number);
+    return number === 2601 || number === 2627;
+}
+
 // Auto-save draft (insert/update by processOrder + packageType)
 async function autoSaveDraft(data) {
     const pool = await getPool();
@@ -74,16 +79,98 @@ async function autoSaveDraft(data) {
         console.log(`[autoSaveDraft] Draft ID ${data.id} not found, fallback to upsert by context`);
     }
 
-    // Check if draft exists by processOrder + packageType
-    const check = await pool.request()
-        .input("processOrder", sql.NVarChar, data.processOrder)
-        .input("packageType", sql.NVarChar, data.packageType)
-        .input("line", sql.NVarChar, data.line)
-        .input("machine", sql.NVarChar, data.machine)
-        .input("currentShift", sql.NVarChar, data.shift)
-        .query(`
-            SELECT TOP 1 id, currentShift, sourceShift
-            FROM tb_CILT_DRAFT
+    const buildContextMutationRequest = () =>
+        pool.request()
+            .input("processOrder", sql.NVarChar, data.processOrder)
+            .input("packageType", sql.NVarChar, data.packageType)
+            .input("line", sql.NVarChar, data.line)
+            .input("machine", sql.NVarChar, data.machine)
+            .input("currentShift", sql.NVarChar, data.shift)
+            .input("inspectionData", sql.NVarChar, inspectionJson)
+            .input("descriptionData", sql.NVarChar, descriptionJson)
+            .input("plant", sql.NVarChar, data.plant)
+            .input("product", sql.NVarChar, data.product || "")
+            .input("batch", sql.NVarChar, data.batch || "");
+
+    // UPDATE existing draft by unique context first (safer under high-frequency autosave)
+    const updateByContextResult = await buildContextMutationRequest().query(`
+        UPDATE tb_CILT_DRAFT
+        SET inspectionData = @inspectionData,
+            descriptionData = @descriptionData,
+            currentShift = @currentShift,
+            plant = @plant,
+            line = @line,
+            machine = @machine,
+            product = @product,
+            batch = @batch,
+            updatedAt = GETDATE()
+        OUTPUT inserted.id
+        WHERE processOrder = @processOrder
+          AND packageType = @packageType
+          AND line = @line
+          AND machine = @machine
+          AND currentShift = @currentShift
+    `);
+
+    const existingContextId = updateByContextResult?.recordset?.[0]?.id;
+    if (existingContextId) {
+        console.log(`[autoSaveDraft] Updated existing draft ID: ${existingContextId}`);
+        return { id: existingContextId, mode: "update" };
+    }
+
+    // INSERT new draft
+    try {
+        const insert = await pool.request()
+            .input("processOrder", sql.NVarChar, data.processOrder)
+            .input("packageType", sql.NVarChar, data.packageType)
+            .input("plant", sql.NVarChar, data.plant)
+            .input("line", sql.NVarChar, data.line)
+            .input("shift", sql.NVarChar, data.shift)
+            .input("machine", sql.NVarChar, data.machine)
+            .input("product", sql.NVarChar, data.product || "")
+            .input("batch", sql.NVarChar, data.batch || "")
+            .input("inspectionData", sql.NVarChar, inspectionJson)
+            .input("descriptionData", sql.NVarChar, descriptionJson)
+            .input("sourceShift", sql.NVarChar, data.shift)
+            .input("currentShift", sql.NVarChar, data.shift)
+            .query(`
+                INSERT INTO tb_CILT_DRAFT (
+                    processOrder, packageType, plant, line, shift, machine,
+                    product, batch,
+                    inspectionData, descriptionData,
+                    sourceShift, currentShift, createdAt, updatedAt
+                )
+                OUTPUT inserted.id
+                VALUES (
+                    @processOrder, @packageType, @plant, @line, @shift, @machine,
+                    @product, @batch,
+                    @inspectionData, @descriptionData,
+                    @sourceShift, @currentShift, GETDATE(), GETDATE()
+                )
+            `);
+
+        const newId = insert.recordset[0].id;
+        console.log(`[autoSaveDraft] Inserted new draft ID: ${newId}`);
+        return { id: newId, mode: "insert" };
+    } catch (error) {
+        // Concurrent autosave can race into duplicate key on insert.
+        // Resolve by retrying context update and return the existing draft ID.
+        if (!isDuplicateKeyError(error)) {
+            throw error;
+        }
+
+        const retryUpdate = await buildContextMutationRequest().query(`
+            UPDATE tb_CILT_DRAFT
+            SET inspectionData = @inspectionData,
+                descriptionData = @descriptionData,
+                currentShift = @currentShift,
+                plant = @plant,
+                line = @line,
+                machine = @machine,
+                product = @product,
+                batch = @batch,
+                updatedAt = GETDATE()
+            OUTPUT inserted.id
             WHERE processOrder = @processOrder
               AND packageType = @packageType
               AND line = @line
@@ -91,72 +178,16 @@ async function autoSaveDraft(data) {
               AND currentShift = @currentShift
         `);
 
-    // UPDATE existing draft
-    if (check.recordset.length > 0) {
-        const existingDraft = check.recordset[0];
-        const id = existingDraft.id;
+        const retryId = retryUpdate?.recordset?.[0]?.id;
+        if (retryId) {
+            console.log(
+                `[autoSaveDraft] Resolved duplicate insert via context update ID: ${retryId}`
+            );
+            return { id: retryId, mode: "update-after-duplicate" };
+        }
 
-        await pool.request()
-            .input("id", sql.Int, id)
-            .input("inspectionData", sql.NVarChar, inspectionJson)
-            .input("descriptionData", sql.NVarChar, descriptionJson)
-            .input("currentShift", sql.NVarChar, data.shift)
-            .input("plant", sql.NVarChar, data.plant)
-            .input("line", sql.NVarChar, data.line)
-            .input("machine", sql.NVarChar, data.machine)
-            .input("product", sql.NVarChar, data.product || "")
-            .input("batch", sql.NVarChar, data.batch || "")
-            .query(`
-                UPDATE tb_CILT_DRAFT
-                SET inspectionData = @inspectionData,
-                    descriptionData = @descriptionData,
-                    currentShift = @currentShift,
-                    plant = @plant,
-                    line = @line,
-                    machine = @machine,
-                    product = @product,
-                    batch = @batch,
-                    updatedAt = GETDATE()
-                WHERE id = @id
-            `);
-
-        console.log(`[autoSaveDraft] Updated existing draft ID: ${id}`);
-        return { id, mode: "update" };
+        throw error;
     }
-
-    // INSERT new draft
-    const insert = await pool.request()
-        .input("processOrder", sql.NVarChar, data.processOrder)
-        .input("packageType", sql.NVarChar, data.packageType)
-        .input("plant", sql.NVarChar, data.plant)
-        .input("line", sql.NVarChar, data.line)
-        .input("shift", sql.NVarChar, data.shift)
-        .input("machine", sql.NVarChar, data.machine)
-        .input("product", sql.NVarChar, data.product || "")
-        .input("batch", sql.NVarChar, data.batch || "")
-        .input("inspectionData", sql.NVarChar, inspectionJson)
-        .input("descriptionData", sql.NVarChar, descriptionJson)
-        .input("sourceShift", sql.NVarChar, data.shift)
-        .input("currentShift", sql.NVarChar, data.shift)
-        .query(`
-            INSERT INTO tb_CILT_DRAFT (
-                processOrder, packageType, plant, line, shift, machine,
-                product, batch,
-                inspectionData, descriptionData,
-                sourceShift, currentShift, createdAt, updatedAt
-            )
-            OUTPUT inserted.id
-            VALUES (
-                @processOrder, @packageType, @plant, @line, @shift, @machine,
-                @product, @batch,
-                @inspectionData, @descriptionData,
-                @sourceShift, @currentShift, GETDATE(), GETDATE()
-            )
-        `);
-
-    const newId = insert.recordset[0].id;
-    console.log(`[autoSaveDraft] Inserted new draft ID: ${newId}`);
-    return { id: newId, mode: "insert" };
 }
 
 // Get all drafts with valid inspection data

@@ -1,5 +1,15 @@
 const ciltCustomService = require("../services/ciltCustomService");
 
+const parseNumericIdOrThrow = (rawId) => {
+  const id = Number.parseInt(rawId, 10);
+  if (Number.isNaN(id)) {
+    const error = new Error("Invalid id parameter");
+    error.status = 400;
+    throw error;
+  }
+  return id;
+};
+
 exports.getCustomData = async (req, res) => {
   try {
     const result = await ciltCustomService.getCustomData();
@@ -40,7 +50,7 @@ exports.createCustomData = async (req, res) => {
 
 exports.updateCustomData = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.updateCustomData(id, req.body);
     return res.status(200).json({
       success: true,
@@ -61,7 +71,7 @@ exports.updateCustomData = async (req, res) => {
 
 exports.deleteCustomData = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.deleteCustomData(id);
     return res.status(200).json({
       success: true,
@@ -84,7 +94,7 @@ exports.deleteCustomData = async (req, res) => {
 
 exports.updatePackageWithRelations = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.updatePackageWithRelations(id, req.body);
     return res.status(200).json({
       success: true,
@@ -101,7 +111,7 @@ exports.updatePackageWithRelations = async (req, res) => {
 
 exports.getCustomDataById = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.getCustomDataById(id);
 
     if (!result) {
@@ -153,16 +163,18 @@ exports.getCustomPackages = async (req, res) => {
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({
+    const status = error.status || 500;
+    return res.status(status).json({
       success: false,
       message: error.message || "Internal server error",
+      details: error.details,
     });
   }
 };
 
 exports.getCustomPackageById = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.getCustomPackageById(id);
 
     if (!result) {
@@ -192,9 +204,11 @@ exports.getCustomPackageById = async (req, res) => {
 
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({
+    const status = error.status || 500;
+    return res.status(status).json({
       success: false,
-      message: error.message,
+      message: error.message || "Internal server error",
+      details: error.details,
     });
   }
 };
@@ -210,16 +224,18 @@ exports.createCustomPackage = async (req, res) => {
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({
+    const status = error.status || 500;
+    return res.status(status).json({
       success: false,
-      message: error.message,
+      message: error.message || "Internal server error",
+      details: error.details,
     });
   }
 };
 
 exports.updateCustomPackage = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.updateCustomPackage(id, req.body);
     return res.status(200).json({
       success: true,
@@ -229,16 +245,18 @@ exports.updateCustomPackage = async (req, res) => {
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({
+    const status = error.status || 500;
+    return res.status(status).json({
       success: false,
-      message: error.message,
+      message: error.message || "Internal server error",
+      details: error.details,
     });
   }
 };
 
 exports.deleteCustomPackage = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseNumericIdOrThrow(req.params.id);
     const result = await ciltCustomService.deleteCustomPackage(id);
     return res.status(200).json({
       success: true,
@@ -250,9 +268,11 @@ exports.deleteCustomPackage = async (req, res) => {
     });
   } catch (error) {
     console.error("Controller error:", error);
-    return res.status(500).json({
+    const status = error.status || 500;
+    return res.status(status).json({
       success: false,
-      message: error.message,
+      message: error.message || "Internal server error",
+      details: error.details,
     });
   }
 };
