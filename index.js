@@ -2,6 +2,8 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 
+dotenv.config();
+
 const app = express();
 const router = express.Router();
 const REQUEST_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "80mb";
@@ -9,8 +11,6 @@ app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 app.use(cors());
 app.use("/", router);
-
-dotenv.config();
 
 const PORT = process.env.PORT;
 
@@ -52,7 +52,6 @@ const ciltLineRoutes = require("./routes/ciltLineRoutes");
 app.use("/line-master", ciltLineRoutes);
 
 const ciltCustomRoutes = require("./routes/ciltCustomRoutes");
-app.use("/custom/packages", ciltCustomRoutes);
 
 const ciltCustomPlantRoutes = require("./routes/ciltCustomPlantRoutes");
 app.use("/custom/plants", ciltCustomPlantRoutes);
@@ -63,8 +62,7 @@ app.use("/custom/machines", ciltCustomMachineRoutes);
 const ciltHeaderFormMasterRoutes = require("./routes/ciltHeaderFormMasterRoutes");
 app.use("/header-form", ciltHeaderFormMasterRoutes);
 
-const ciltCustomMetadataRoutes = require("./routes/ciltCustomRoutes");
-app.use("/custom", ciltCustomMetadataRoutes);
+app.use("/custom", ciltCustomRoutes);
 
 const ciltPressureRoutes = require("./routes/ciltPressureRoutes");
 app.use("/", ciltPressureRoutes);
