@@ -18,6 +18,7 @@ const PAGE_SIZE_CONFIG = {
 };
 
 const DEFAULT_PAGE_SIZE = "A4 portrait";
+const PDF_METADATA_TITLE = "CILTpro PDF - ORIONt";
 const JOB_OUTPUT_DIR = path.join(__dirname, "..", "tmp", "cilt-pdf-jobs");
 const JOB_TTL_MS = Number(process.env.CILT_PDF_JOB_TTL_MS || 60 * 60 * 1000);
 const JOB_CLEANUP_INTERVAL_MS = Number(
@@ -786,10 +787,6 @@ const mergePdfFiles = async (chunkPaths = [], outputPath) => {
   if (!Array.isArray(chunkPaths) || chunkPaths.length === 0) {
     throw new Error("No chunk PDFs to merge.");
   }
-  if (chunkPaths.length === 1) {
-    await fs.promises.rename(chunkPaths[0], outputPath);
-    return;
-  }
 
   const mergedPdf = await PDFDocument.create();
   for (const chunkPath of chunkPaths) {
@@ -799,6 +796,7 @@ const mergePdfFiles = async (chunkPaths = [], outputPath) => {
     const copiedPages = await mergedPdf.copyPages(sourcePdf, pageIndices);
     copiedPages.forEach((copiedPage) => mergedPdf.addPage(copiedPage));
   }
+  mergedPdf.setTitle(PDF_METADATA_TITLE, { showInWindowTitleBar: true });
   const mergedBytes = await mergedPdf.save({ useObjectStreams: false });
   await fs.promises.writeFile(outputPath, mergedBytes);
 };
