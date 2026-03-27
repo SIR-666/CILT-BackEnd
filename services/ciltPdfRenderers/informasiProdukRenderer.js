@@ -63,7 +63,7 @@ const renderInformasiProdukDetailHtml = (record = {}) => {
   return `
     <div style="margin-top:10px;">
       <h3 style="font-weight:700; background-color:#d9f0e3; padding:8px 10px; margin:15px 0 8px; font-size:12px; color:#2f5d43;">
-        INFORMASI PRODUK
+        INFORMASI PRODUCT
       </h3>
       <table style="width:100%; border-collapse:collapse; margin:8px 0; font-size:9px;">
         <tbody>

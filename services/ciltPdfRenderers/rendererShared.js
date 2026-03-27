@@ -15,7 +15,7 @@ const V2_PACKAGE_PAGE_SIZE_MAP = {
   "PEMAKAIAN H2O2 A3": "A3 landscape",
   "PENGECEKAN PRESSURE": "A3 landscape",
   "START & FINISH": "A3 landscape",
-  "INFORMASI PRODUK": "A3 landscape",
+  "INFORMASI PRODUCT": "A3 landscape",
   "LAPORAN PRODUKSI MESIN": "A3 landscape",
   "LAPORAN ARTEMA & SMS CARDBOARD": "A4 landscape",
   "LAPORAN FRANS WP 25 CASE": "A4 landscape",
