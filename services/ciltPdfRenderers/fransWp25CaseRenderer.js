@@ -123,7 +123,7 @@ const renderFransWp25CaseDetailHtml = (record = {}) => {
 
   return `
     <div style="margin-top:10px;">
-      ${renderPrintSectionTitle("INFORMASI PRODUK")}
+      ${renderPrintSectionTitle("INFORMASI PRODUCT")}
       <table style="width:100%; border-collapse:collapse; margin:8px 0 15px; font-size:10px;">
         <tbody>
           ${infoRows

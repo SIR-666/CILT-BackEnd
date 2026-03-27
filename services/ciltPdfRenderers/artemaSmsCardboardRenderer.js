@@ -111,7 +111,7 @@ const renderArtemaSmsCardboardDetailHtml = (record = {}) => {
 
   return `
     <div style="margin-top:10px;">
-      ${renderPrintSectionTitle("INFORMASI PRODUK")}
+      ${renderPrintSectionTitle("INFORMASI PRODUCT")}
       <table style="width:100%; border-collapse:collapse; margin:10px 0; font-size:12px;">
         <tbody>
           ${infoRows
