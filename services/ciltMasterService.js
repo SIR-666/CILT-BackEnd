@@ -19,6 +19,48 @@ function isH2O2A3Type(value) {
   return normalizedType === "PEMAKAIAN H2O2 A3";
 }
 
+const A3_FLEX_MASTER_TABLE = "tb_CILT_a3_flex_master";
+
+function isA3FlexType(value) {
+  const normalizedType = normalizePackageType(value);
+  return normalizedType === "A3 / FLEX";
+}
+
+function normalizeSortOrder(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    throw new Error("sort_order must be a valid number");
+  }
+
+  return Math.trunc(numericValue);
+}
+
+function normalizeBit(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  if (typeof value === "boolean") return value;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y"].includes(normalized)) return true;
+  if (["0", "false", "no", "n"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+function isA3FlexMasterPayload(data = {}) {
+  return (
+    isA3FlexType(data?.type ?? data?.package_type) ||
+    Object.prototype.hasOwnProperty.call(data, "section_key") ||
+    Object.prototype.hasOwnProperty.call(data, "field_key") ||
+    Object.prototype.hasOwnProperty.call(data, "data_group")
+  );
+}
+
 function toTitleLabel(raw) {
   const withTitle = String(raw || "").replace(/\b\w/g, (char) => char.toUpperCase());
   return withTitle
@@ -245,8 +287,286 @@ async function getPaperA3MasterColumns() {
   }
 }
 
+async function getA3FlexMasterRows(plant, line, machine) {
+  const pool = await getPool();
+  const result = await pool
+    .request()
+    .input("plant", sql.VarChar, plant)
+    .input("line", sql.VarChar, line)
+    .input("machine", sql.VarChar, machine)
+    .input("package_type", sql.VarChar, "A3 / FLEX").query(`
+      SELECT
+        id,
+        plant,
+        line,
+        machine,
+        package_type AS type,
+        package_type,
+        section_key,
+        section_title,
+        data_group,
+        field_key,
+        field_label,
+        layout_type,
+        input_type,
+        placeholder,
+        options_json,
+        pair_group,
+        pair_side,
+        sort_order AS order_no,
+        sort_order,
+        is_readonly,
+        is_required,
+        is_active,
+        created_at,
+        updated_at,
+        '${A3_FLEX_MASTER_TABLE}' AS source_table
+      FROM dbo.${A3_FLEX_MASTER_TABLE}
+      WHERE plant = @plant
+        AND line = @line
+        AND machine = @machine
+        AND package_type = @package_type
+        AND is_active = 1
+      ORDER BY sort_order ASC, id ASC
+    `);
+
+  return result.recordset;
+}
+
+async function createA3FlexMaster(data) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const packageType = data?.package_type || data?.type || "A3 / FLEX";
+    const normalizedSortOrder = normalizeSortOrder(data?.sort_order ?? data?.order_no);
+    let sortOrder = normalizedSortOrder;
+
+    if (sortOrder === null) {
+      const sortOrderResult = await transaction
+        .request()
+        .input("plant", sql.VarChar, data?.plant)
+        .input("line", sql.VarChar, data?.line)
+        .input("machine", sql.VarChar, data?.machine)
+        .input("package_type", sql.VarChar, packageType).query(`
+          SELECT ISNULL(MAX(sort_order), 0) + 1 AS next_sort_order
+          FROM dbo.${A3_FLEX_MASTER_TABLE}
+          WHERE plant = @plant
+            AND line = @line
+            AND machine = @machine
+            AND package_type = @package_type
+        `);
+
+      sortOrder = sortOrderResult.recordset?.[0]?.next_sort_order || 1;
+    }
+
+    const result = await transaction
+      .request()
+      .input("plant", sql.VarChar, data?.plant)
+      .input("line", sql.VarChar, data?.line)
+      .input("machine", sql.VarChar, data?.machine)
+      .input("package_type", sql.VarChar, packageType)
+      .input("section_key", sql.VarChar, data?.section_key)
+      .input("section_title", sql.NVarChar, data?.section_title)
+      .input("data_group", sql.VarChar, data?.data_group)
+      .input("field_key", sql.VarChar, data?.field_key)
+      .input("field_label", sql.NVarChar, data?.field_label)
+      .input("layout_type", sql.VarChar, data?.layout_type)
+      .input("input_type", sql.VarChar, data?.input_type)
+      .input("placeholder", sql.NVarChar, data?.placeholder ?? null)
+      .input("options_json", sql.NVarChar(sql.MAX), data?.options_json ?? null)
+      .input("pair_group", sql.Int, data?.pair_group ?? null)
+      .input("pair_side", sql.VarChar, data?.pair_side ?? null)
+      .input("sort_order", sql.Int, sortOrder)
+      .input("is_readonly", sql.Bit, normalizeBit(data?.is_readonly, false))
+      .input("is_required", sql.Bit, normalizeBit(data?.is_required, false))
+      .input("is_active", sql.Bit, normalizeBit(data?.is_active, true)).query(`
+        INSERT INTO dbo.${A3_FLEX_MASTER_TABLE}
+          (
+            plant,
+            line,
+            machine,
+            package_type,
+            section_key,
+            section_title,
+            data_group,
+            field_key,
+            field_label,
+            layout_type,
+            input_type,
+            placeholder,
+            options_json,
+            pair_group,
+            pair_side,
+            sort_order,
+            is_readonly,
+            is_required,
+            is_active
+          )
+        OUTPUT inserted.*
+        VALUES
+          (
+            @plant,
+            @line,
+            @machine,
+            @package_type,
+            @section_key,
+            @section_title,
+            @data_group,
+            @field_key,
+            @field_label,
+            @layout_type,
+            @input_type,
+            @placeholder,
+            @options_json,
+            @pair_group,
+            @pair_side,
+            @sort_order,
+            @is_readonly,
+            @is_required,
+            @is_active
+          )
+      `);
+
+    await transaction.commit();
+    return result.recordset?.[0] || null;
+  } catch (error) {
+    logger.error("Error creating A3 FLEX master:", error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Rollback failed:", rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
+async function updateA3FlexMaster(id, data) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const req = transaction.request();
+    req.input("id", sql.Int, id);
+
+    const columns = {
+      plant: sql.VarChar,
+      line: sql.VarChar,
+      machine: sql.VarChar,
+      package_type: sql.VarChar,
+      section_key: sql.VarChar,
+      section_title: sql.NVarChar,
+      data_group: sql.VarChar,
+      field_key: sql.VarChar,
+      field_label: sql.NVarChar,
+      layout_type: sql.VarChar,
+      input_type: sql.VarChar,
+      placeholder: sql.NVarChar,
+      options_json: sql.NVarChar(sql.MAX),
+      pair_group: sql.Int,
+      pair_side: sql.VarChar,
+      is_readonly: sql.Bit,
+      is_required: sql.Bit,
+      is_active: sql.Bit,
+    };
+
+    const setClauses = [];
+    for (const [column, type] of Object.entries(columns)) {
+      if (!Object.prototype.hasOwnProperty.call(data, column)) continue;
+      let value = data[column];
+
+      if (column === "is_readonly" || column === "is_required" || column === "is_active") {
+        value = normalizeBit(value, column === "is_active");
+      }
+
+      req.input(column, type, value ?? null);
+      setClauses.push(`${column} = @${column}`);
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(data, "sort_order") ||
+      Object.prototype.hasOwnProperty.call(data, "order_no")
+    ) {
+      const sortOrder = normalizeSortOrder(data?.sort_order ?? data?.order_no);
+      req.input("sort_order", sql.Int, sortOrder);
+      setClauses.push("sort_order = @sort_order");
+    }
+
+    if (setClauses.length === 0) {
+      throw new Error("No updatable fields provided");
+    }
+
+    const result = await req.query(`
+      UPDATE dbo.${A3_FLEX_MASTER_TABLE}
+      SET ${setClauses.join(", ")},
+          updated_at = GETDATE()
+      OUTPUT inserted.*
+      WHERE id = @id
+    `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected?.[0] || 0,
+      updated: result.recordset,
+    };
+  } catch (error) {
+    logger.error("Error updating A3 FLEX master:", error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Rollback failed:", rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
+async function deleteA3FlexMaster(id) {
+  let transaction;
+  try {
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+
+    const result = await transaction
+      .request()
+      .input("id", sql.Int, id).query(`
+        DELETE FROM dbo.${A3_FLEX_MASTER_TABLE}
+        OUTPUT deleted.*
+        WHERE id = @id
+      `);
+
+    await transaction.commit();
+    return {
+      rowsAffected: result.rowsAffected?.[0] || 0,
+      deleted: result.recordset,
+    };
+  } catch (error) {
+    logger.error("Error deleting A3 FLEX master:", error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Rollback failed:", rollbackError);
+      }
+    }
+    throw error;
+  }
+}
+
 async function createMasterCILT(data) {
   try {
+    if (isA3FlexMasterPayload(data)) {
+      return await createA3FlexMaster(data);
+    }
+
     const pool = await getPool();
     const result = await pool
       .request()
@@ -289,6 +609,10 @@ async function getMasterCILT(id) {
 
 async function getAllMasterCILT(plant, line, machine, type) {
   try {
+    if (isA3FlexType(type)) {
+      return await getA3FlexMasterRows(plant, line, machine);
+    }
+
     if (isPaperA3Type(type)) {
       const paperA3Columns = await getPaperA3MasterColumns();
       if (paperA3Columns.length > 0) {
@@ -384,6 +708,10 @@ async function getType(plant, line, machine) {
 
 async function updateMasterCILT(id, data) {
   try {
+    if (isA3FlexMasterPayload(data)) {
+      return await updateA3FlexMaster(id, data);
+    }
+
     const pool = await getPool();
     const result = await pool
       .request()
@@ -415,6 +743,11 @@ async function updateMasterCILT(id, data) {
 
 async function deleteMasterCILT(id) {
   try {
+    const deletedA3Flex = await deleteA3FlexMaster(id);
+    if (deletedA3Flex?.rowsAffected > 0) {
+      return deletedA3Flex;
+    }
+
     const pool = await getPool();
     const result = await pool
       .request()
