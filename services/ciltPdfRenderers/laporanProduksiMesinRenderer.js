@@ -60,12 +60,10 @@ const resolveItemValue = (
   return { displayValue: legacy || "-", statusValue: legacy };
 };
 
-const getPrimaryPayload = (record = {}) => {
+const getPayloadRows = (record = {}) => {
   const inspectionRows = parseJsonArray(record?.inspectionData);
-  return (
-    inspectionRows.find(
-      (row) => row && typeof row === "object" && !Array.isArray(row)
-    ) || {}
+  return inspectionRows.filter(
+    (row) => row && typeof row === "object" && !Array.isArray(row)
   );
 };
 
@@ -82,6 +80,15 @@ const buildGroupedSections = (payload = {}) => {
     return accumulator;
   }, {});
 };
+
+const buildMachineReportPageEntries = (record = {}) =>
+  getPayloadRows(record)
+    .map((payload, index) => ({
+      page: normalizePageNumber(payload?.page, index + 1),
+      grouped: buildGroupedSections(payload),
+      values: payload?.values && typeof payload.values === "object" ? payload.values : {},
+    }))
+    .sort((left, right) => left.page - right.page);
 
 const buildRangeHint = (paramItem = {}) =>
   paramItem?.range_text ||
@@ -216,12 +223,7 @@ const renderMachineSectionTable = ({
 };
 
 const renderMachineSections = ({ record = {} }) => {
-  const payload = getPrimaryPayload(record);
-  const grouped = buildGroupedSections(payload);
-  const values =
-    payload?.values && typeof payload.values === "object" ? payload.values : {};
-  const payloadPage = normalizePageNumber(payload?.page, 1);
-  const sections = Object.keys(grouped);
+  const pageEntries = buildMachineReportPageEntries(record);
 
   return `
     <div style="margin-top:10px;">
@@ -229,17 +231,35 @@ const renderMachineSections = ({ record = {} }) => {
         MACHINE CHECK PARAMETERS
       </h3>
       ${
-        sections.length === 0
+        pageEntries.length === 0
           ? '<p style="text-align:center; color:#666; font-size:10px;">No machine check data</p>'
-          : sections
-              .map((sectionName) =>
-                renderMachineSectionTable({
-                  sectionName,
-                  sectionRows: Array.isArray(grouped[sectionName]) ? grouped[sectionName] : [],
-                  values,
-                  payloadPage,
-                })
-              )
+          : pageEntries
+              .map(({ page, grouped, values }, pageIndex) => {
+                const sections = Object.keys(grouped || {});
+                return `
+                  <div style="${pageIndex > 0 ? "page-break-before:always;" : ""} margin-bottom:16px;">
+                    <div style="font-weight:700; background-color:#eef5ef; padding:6px 8px; margin:10px 0 5px; border-left:3px solid #2e7d32; font-size:10px;">
+                      ${escapeHtml(`PAGE ${page}`)}
+                    </div>
+                    ${
+                      sections.length === 0
+                        ? '<p style="text-align:center; color:#666; font-size:10px;">No machine check data</p>'
+                        : sections
+                            .map((sectionName) =>
+                              renderMachineSectionTable({
+                                sectionName,
+                                sectionRows: Array.isArray(grouped[sectionName])
+                                  ? grouped[sectionName]
+                                  : [],
+                                values,
+                                payloadPage: page,
+                              })
+                            )
+                            .join("")
+                    }
+                  </div>
+                `;
+              })
               .join("")
       }
     </div>
