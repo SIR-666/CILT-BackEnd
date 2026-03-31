@@ -321,7 +321,7 @@ async function getReportCILTAll(packageType, plant, line, shift, machine, date) 
 async function getSKU(filter) {
   try {
     const pool = await getPool();
-    let query = `SELECT id, sku AS material, category FROM Product`;
+    let query = `SELECT id, sku AS material, category, volume FROM Product`;
     const request = pool.request();
 
     if (filter) {
