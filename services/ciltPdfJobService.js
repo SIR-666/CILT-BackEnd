@@ -65,6 +65,9 @@ const SINGLE_WORKER_RENDER_CHUNK_SIZE_OVERRIDE = (() => {
   if (!Number.isFinite(parsed)) return null;
   return Math.max(1, Math.min(MAX_SHEETS_PER_CHUNK, Math.floor(parsed)));
 })();
+const MERGE_USE_OBJECT_STREAMS =
+  String(process.env.CILT_PDF_MERGE_USE_OBJECT_STREAMS || "true").trim().toLowerCase() !==
+  "false";
 const BROWSER_IDLE_TTL_MS = Number(
   process.env.CILT_PDF_BROWSER_IDLE_TTL_MS || 2 * 60 * 1000
 );
@@ -962,7 +965,9 @@ const mergePdfFiles = async (chunkPaths = [], outputPath) => {
     copiedPages.forEach((copiedPage) => mergedPdf.addPage(copiedPage));
   }
   mergedPdf.setTitle(PDF_METADATA_TITLE, { showInWindowTitleBar: true });
-  const mergedBytes = await mergedPdf.save({ useObjectStreams: false });
+  const mergedBytes = await mergedPdf.save({
+    useObjectStreams: MERGE_USE_OBJECT_STREAMS,
+  });
   await fs.promises.writeFile(outputPath, mergedBytes);
 };
 

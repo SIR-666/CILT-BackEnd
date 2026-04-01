@@ -82,16 +82,16 @@ const mergeSegregasiRows = (record = {}, inspectionRows = []) => {
 };
 
 const renderInfoTable = (rows = []) => `
-  <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+  <table class="sg-info">
     <tbody>
       ${rows
         .map(
           (row) => `
             <tr>
-              <td style="border:1px solid #e5e7eb; background:#f8fafc; color:#374151; font-size:10px; font-weight:600; padding:3px 5px; width:34%;">
+              <td class="sg-info-label">
                 ${escapeHtml(toDisplayText(row?.label, "-"))}
               </td>
-              <td style="border:1px solid #e5e7eb; color:#111827; font-size:10px; padding:3px 5px; word-break:break-word;">
+              <td class="sg-info-value">
                 ${escapeHtml(toDisplayText(row?.value, "-"))}
               </td>
             </tr>
@@ -110,13 +110,13 @@ const renderSegregasiCard = (row = {}, index = 0) => {
   const auditTime = toDisplayText(row?.time || row?.lastModifiedTime, "-");
 
   return `
-    <div style="border:1px solid #d1d5db; border-radius:6px; padding:7px; background:#ffffff; line-height:1.15; break-inside:avoid; page-break-inside:avoid;">
-      <div style="text-align:center; font-size:11px; font-weight:700; color:#1f2937; background:#f8fafc; border:1px solid #e5e7eb; border-radius:4px; padding:4px 6px; margin-bottom:6px;">
+    <div class="sg-card">
+      <div class="sg-entry">
         Entry ${index + 1}
       </div>
 
-      <div style="margin-bottom:6px;">
-        <div style="font-size:9px; font-weight:700; color:#166534; margin-bottom:4px;">Segregasi</div>
+      <div class="sg-section">
+        <div class="sg-title-sm">Segregasi</div>
         ${renderInfoTable([
           { label: "Type", value: resolvedType },
           { label: "Prod Type", value: toDisplayText(row?.prodType, "-") },
@@ -124,8 +124,8 @@ const renderSegregasiCard = (row = {}, index = 0) => {
         ])}
       </div>
 
-      <div style="margin-bottom:6px;">
-        <div style="font-size:10px; font-weight:700; color:#166534; margin-bottom:4px;">Description</div>
+      <div class="sg-section">
+        <div class="sg-title-md">Description</div>
         ${renderInfoTable([
           { label: "Flavour", value: toDisplayText(row?.flavour, "-") },
           { label: "Kode Prod.", value: toDisplayText(row?.kodeProd, "-") },
@@ -140,8 +140,8 @@ const renderSegregasiCard = (row = {}, index = 0) => {
         ])}
       </div>
 
-      <div style="margin-bottom:6px;">
-        <div style="font-size:10px; font-weight:700; color:#166534; margin-bottom:4px;">Equipment Status</div>
+      <div class="sg-section">
+        <div class="sg-title-md">Equipment Status</div>
         ${renderInfoTable([
           { label: "Magazine", value: row?.magazine ? "Ya" : "-" },
           { label: "Wastafel", value: row?.wastafel ? "Ya" : "-" },
@@ -153,7 +153,7 @@ const renderSegregasiCard = (row = {}, index = 0) => {
       ${
         row?.user || row?.time || row?.lastModifiedBy || row?.lastModifiedTime
           ? `
-            <div style="padding-top:5px; border-top:1px solid #e5e7eb; font-size:9px; color:#6b7280;">
+            <div class="sg-audit">
               <div>User: ${escapeHtml(auditUser)}</div>
               <div>Time: ${escapeHtml(auditTime)}</div>
             </div>
@@ -192,21 +192,17 @@ const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
           : pageRows;
 
       return `
-        <div ${
-          pageIndex === 0
-            ? ""
-            : 'style="page-break-before:always; break-before:page; padding-top:6px;"'
-        }>
-          <div style="display:grid; grid-template-columns:repeat(${pageColumnCount}, minmax(0, 1fr)); gap:6px; align-items:start;">
+        <div class="sg-page${pageIndex === 0 ? "" : " sg-page--break"}">
+          <div class="sg-grid" style="grid-template-columns:repeat(${pageColumnCount}, minmax(0, 1fr));">
             ${paddedRows
               .map((row, columnIndex) => {
                 const absoluteIndex = pageIndex * 3 + columnIndex;
                 return `
-                  <div style="min-width:0;">
+                  <div class="sg-col">
                     ${
                       row
                         ? renderSegregasiCard(row, absoluteIndex)
-                        : '<div style="min-height:1px;"></div>'
+                        : '<div class="sg-spacer"></div>'
                     }
                   </div>
                 `;
@@ -218,7 +214,7 @@ const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
     })
     .join("");
 
-  return `<div style="padding-bottom:6px;">${pagesHtml}</div>`;
+  return `<div class="sg-wrap">${pagesHtml}</div>`;
 };
 
 module.exports = { renderSegregasiDetailHtml };
