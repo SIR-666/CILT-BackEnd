@@ -493,6 +493,7 @@ const splitIntoChunks = (
   {
     chunkSize = MAX_SHEETS_PER_CHUNK,
     targetHtmlChars = TARGET_CHUNK_HTML_CHARS,
+    balanceByHtml = true,
   } = {}
 ) => {
   const normalizedItems = Array.isArray(items) ? items : [];
@@ -523,6 +524,7 @@ const splitIntoChunks = (
     const itemHtmlChars = String(item?.html || "").length;
     const reachesSheetLimit = currentSheets.length >= normalizedChunkSize;
     const exceedsHtmlTarget =
+      balanceByHtml &&
       currentSheets.length > 0 &&
       currentHtmlChars + itemHtmlChars > normalizedTargetHtmlChars;
 
@@ -953,8 +955,18 @@ const runJob = async (jobId) => {
       Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
     const renderMode = normalizeRenderMode(job.renderMode);
-    const sheetChunks = splitIntoChunks(job.sheets, { chunkSize });
-    renderWorkerCount = resolveRenderWorkerCount(sheetChunks.length);
+    const baseSheetChunks = splitIntoChunks(job.sheets, {
+      chunkSize,
+      balanceByHtml: false,
+    });
+    renderWorkerCount = resolveRenderWorkerCount(baseSheetChunks.length);
+    const shouldBalanceChunksByHtml = renderWorkerCount > 1;
+    const sheetChunks = shouldBalanceChunksByHtml
+      ? splitIntoChunks(job.sheets, {
+          chunkSize,
+          balanceByHtml: true,
+        })
+      : baseSheetChunks;
 
     job.chunkSize = chunkSize;
     job.renderMode = renderMode;
@@ -968,7 +980,9 @@ const runJob = async (jobId) => {
 
     // eslint-disable-next-line no-console
     console.log(
-      `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}`
+      `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}, chunkStrategy=${
+        shouldBalanceChunksByHtml ? "html-balanced" : "count-based"
+      }, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}`
     );
 
     let nextChunkIndex = 0;
@@ -1420,6 +1434,7 @@ const prepareSheetsForJob = async (job) => {
   job.totalSheets = preparedSheets.length;
   const estimatedChunks = splitIntoChunks(preparedSheets, {
     chunkSize: job.chunkSize,
+    balanceByHtml: false,
   });
   job.totalChunks = Math.max(1, estimatedChunks.length);
   job.sourceItems = [];
@@ -1479,6 +1494,7 @@ const createJobFromPreparedSheetsInternal = ({
         1,
         splitIntoChunks(sanitizedSheets, {
           chunkSize: resolvedChunkSize,
+          balanceByHtml: false,
         }).length
       )
     : Math.max(1, Math.ceil(totalSheets / resolvedChunkSize));
