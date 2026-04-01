@@ -27,7 +27,7 @@ const renderH2o2SprayDetailHtml = (record = {}) => {
     rows.length === 0
       ? `
         <tr>
-          <td colspan="${columns.length}" style="padding:20px 8px; text-align:center; color:#666; font-style:italic; border:1px solid #000;">
+          <td class="pkg-empty" colspan="${columns.length}">
             Tidak ada data yang diinput
           </td>
         </tr>
@@ -35,26 +35,26 @@ const renderH2o2SprayDetailHtml = (record = {}) => {
       : rows
           .map(
             (row, rowIndex) => `
-              <tr style="break-inside:avoid; page-break-inside:avoid;">
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+              <tr>
+                <td class="pkg-cell">
                   ${rowIndex + 1}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "jam"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "konsentrasi"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "volume"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "kode"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "user"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "time"), ""))}
                 </td>
               </tr>
@@ -63,24 +63,24 @@ const renderH2o2SprayDetailHtml = (record = {}) => {
           .join("");
 
   return `
-    <div style="margin-top:10px; margin-bottom:14px; break-inside:auto; page-break-inside:auto;">
-      <div style="position:relative;">
+    <div class="pkg-wrap">
+      <div class="pkg-stage">
         ${
           hasLanjutanLabel
             ? `
-              <div style="position:absolute; left:50%; top:50%; transform:translate(-50%, -50%) rotate(-18deg); font-size:30px; font-style:italic; font-weight:700; color:rgba(173, 29, 44, 0.62); letter-spacing:1px; white-space:nowrap; border:3px solid rgba(173, 29, 44, 0.6); border-radius:6px; padding:4px 16px; z-index:2; pointer-events:none;">
+              <div class="pkg-watermark">
                 Lanjutan
               </div>
             `
             : ""
         }
-        <table style="position:relative; z-index:1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px;">
+        <table class="pkg-table">
           <thead>
             <tr>
               ${columns
                 .map(
                   (column) => `
-                    <th style="width:${column.width}; padding:12px 8px; text-align:${column.align}; border:1px solid #000; background:#f2f2f2; color:#111827; white-space:normal; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                    <th class="pkg-head" style="width:${column.width}; text-align:${column.align};">
                       ${column.label}
                     </th>
                   `

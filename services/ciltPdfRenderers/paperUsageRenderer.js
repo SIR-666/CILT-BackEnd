@@ -31,7 +31,7 @@ const renderPaperUsageDetailHtml = (record = {}) => {
     rows.length === 0
       ? `
         <tr>
-          <td colspan="${columns.length}" style="padding:20px 8px; text-align:center; color:#666; font-style:italic; border:1px solid #000;">
+          <td class="pkg-empty" colspan="${columns.length}">
             Tidak ada data yang diinput
           </td>
         </tr>
@@ -39,26 +39,26 @@ const renderPaperUsageDetailHtml = (record = {}) => {
       : rows
           .map(
             (row, rowIndex) => `
-              <tr style="break-inside:avoid; page-break-inside:avoid;">
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+              <tr>
+                <td class="pkg-cell">
                   ${rowIndex + 1}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "jam"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "boxNo"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "pdPaper"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "qtyLabel"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "user"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "time"), ""))}
                 </td>
               </tr>
@@ -67,26 +67,26 @@ const renderPaperUsageDetailHtml = (record = {}) => {
           .join("");
 
   return `
-    <div style="margin-top:10px; margin-bottom:14px; break-inside:auto; page-break-inside:auto;">
-      <div style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center; margin:8px 0;">
+    <div class="pkg-wrap">
+      <div class="pkg-checkline">
         <div></div>
-        <div style="justify-self:end; display:flex; align-items:center; gap:8px;">
-          <div style="width:14px; height:14px; border:2px solid #111; display:flex; align-items:center; justify-content:center; font-size:10px; line-height:1;">
-            ${cekAlergenKemasan ? "✔" : ""}
+        <div class="pkg-checkline-right">
+          <div class="pkg-checkbox">
+            ${cekAlergenKemasan ? "v" : ""}
           </div>
-          <span style="font-weight:700; color:#111827; font-size:10px;">
+          <span class="pkg-checklabel">
             CEK LABEL ALERGEN KEMASAN
           </span>
         </div>
       </div>
-      <div style="position:relative; margin-top:8px;">
-        <table style="position:relative; z-index:1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px;">
+      <div class="pkg-stage" style="margin-top:8px;">
+        <table class="pkg-table">
           <thead>
             <tr>
               ${columns
                 .map(
                   (column) => `
-                    <th style="width:${column.width}; min-width:${column.minWidth}; padding:12px 8px; text-align:${column.align}; border:1px solid #000; background:#f2f2f2; color:#111827; white-space:normal; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                    <th class="pkg-head" style="width:${column.width}; min-width:${column.minWidth}; text-align:${column.align};">
                       ${column.label}
                     </th>
                   `

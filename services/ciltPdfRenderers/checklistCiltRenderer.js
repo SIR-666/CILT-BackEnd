@@ -408,9 +408,6 @@ const renderChecklistTableHtml = (rows = [], options = {}) => {
 
   return `
     <div class="ck-wrap">
-      <div class="ck-title">
-        CHECKLIST CILT
-      </div>
       ${layers.map((layer, index) => renderLayerTable(layer, index, monthLabel)).join("")}
     </div>
   `;

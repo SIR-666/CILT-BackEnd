@@ -23,7 +23,7 @@ const renderScrewCapDetailHtml = (record = {}) => {
     rows.length === 0
       ? `
         <tr>
-          <td colspan="${columns.length}" style="padding:20px 8px; text-align:center; color:#666; font-style:italic; border:1px solid #000;">
+          <td class="pkg-empty" colspan="${columns.length}">
             Tidak ada data yang diinput
           </td>
         </tr>
@@ -31,26 +31,26 @@ const renderScrewCapDetailHtml = (record = {}) => {
       : rows
           .map(
             (row, rowIndex) => `
-              <tr style="break-inside:avoid; page-break-inside:avoid;">
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+              <tr>
+                <td class="pkg-cell">
                   ${rowIndex + 1}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "jam"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "ofNo"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "boxNo"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "qtyLabel"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "user"), ""))}
                 </td>
-                <td style="padding:12px 8px; text-align:center; color:#111827; border:1px solid #000; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                <td class="pkg-cell">
                   ${escapeHtml(toDisplayText(getValueByExactKey(row, "time"), ""))}
                 </td>
               </tr>
@@ -59,15 +59,15 @@ const renderScrewCapDetailHtml = (record = {}) => {
           .join("");
 
   return `
-    <div style="margin-top:10px; margin-bottom:14px; break-inside:auto; page-break-inside:auto;">
-      <div style="position:relative;">
-        <table style="position:relative; z-index:1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px;">
+    <div class="pkg-wrap">
+      <div class="pkg-stage">
+        <table class="pkg-table">
           <thead>
             <tr>
               ${columns
                 .map(
                   (column) => `
-                    <th style="width:${column.width}; min-width:${column.minWidth}; padding:12px 8px; text-align:${column.align}; border:1px solid #000; background:#f2f2f2; color:#111827; white-space:normal; vertical-align:middle; word-break:break-word; overflow-wrap:anywhere;">
+                    <th class="pkg-head" style="width:${column.width}; min-width:${column.minWidth}; text-align:${column.align};">
                       ${column.label}
                     </th>
                   `
