@@ -118,8 +118,7 @@ const resolveChecklistResultTone = (raw) => {
   if (!text) {
     return {
       label: "",
-      bgColor: "transparent",
-      textColor: "#111827",
+      toneClass: "ck-tone-empty",
     };
   }
 
@@ -127,8 +126,7 @@ const resolveChecklistResultTone = (raw) => {
   if (["g", "ok"].includes(lowered) || lowered.includes("ok")) {
     return {
       label: lowered.includes("not ok") ? "NOT OK" : "OK",
-      bgColor: lowered.includes("not ok") ? "#f8c9cc" : "#cff5d0",
-      textColor: "#111827",
+      toneClass: lowered.includes("not ok") ? "ck-tone-not-ok" : "ck-tone-ok",
     };
   }
 
@@ -140,23 +138,20 @@ const resolveChecklistResultTone = (raw) => {
   ) {
     return {
       label: "NOT OK",
-      bgColor: "#f8c9cc",
-      textColor: "#111827",
+      toneClass: "ck-tone-not-ok",
     };
   }
 
   if (lowered === "n" || lowered.includes("need")) {
     return {
       label: "NEED",
-      bgColor: "#ffe9b0",
-      textColor: "#111827",
+      toneClass: "ck-tone-need",
     };
   }
 
   return {
     label: text,
-    bgColor: "#ffe9b0",
-    textColor: "#111827",
+    toneClass: "ck-tone-need",
   };
 };
 
@@ -179,27 +174,24 @@ const splitChecklistRowsForPrint = (
 const renderShiftSlot = (entry, shiftNumber, isLastSlot = false) => {
   const tone = resolveChecklistResultTone(entry?.result);
   return `
-    <div style="position:relative; height:14px; display:flex; align-items:center; justify-content:center; border-bottom:${
-      isLastSlot ? "none" : "1px solid #bfbfbf"
-    }; opacity:${entry ? "1" : "0.35"}; background:${tone.bgColor}; font-weight:700; color:${
-      tone.textColor
-    }; line-height:1.1;">
-      <span style="position:absolute; left:2px; top:0px; font-size:8px; color:#374151; font-weight:700;">
+    <div class="ck-slot ${isLastSlot ? "" : "ck-slot--mid"} ${
+      entry ? "ck-slot--active" : "ck-slot--faded"
+    } ${tone.toneClass}">
+      <span class="ck-slot-label">
         ${shiftNumber}
       </span>
-      <span>${escapeHtml(toDisplayText(tone.label, ""))}</span>
+      <span class="ck-badge">${escapeHtml(toDisplayText(tone.label, ""))}</span>
     </div>
   `;
 };
 
 const renderShiftBadge = (shiftNumber, active, isLast = false) => {
-  const bgColor =
-    shiftNumber === 1 ? "#dbeafe" : shiftNumber === 2 ? "#dcfce7" : "#fef9c3";
+  const shiftClass = shiftNumber === 1 ? "ck-shift-1" : shiftNumber === 2 ? "ck-shift-2" : "ck-shift-3";
   return `
-    <div style="position:relative; height:14px; display:flex; align-items:center; justify-content:center; border-bottom:${
-      isLast ? "none" : "1px solid #bfbfbf"
-    }; opacity:${active ? "1" : "0.35"}; font-weight:700; background:${bgColor};">
-      <span style="position:absolute; left:2px; top:0px; font-size:8px;">${shiftNumber}</span>
+    <div class="ck-slot ${isLast ? "" : "ck-slot--mid"} ${
+      active ? "ck-slot--active" : "ck-slot--faded"
+    } ${shiftClass}">
+      <span class="ck-slot-label">${shiftNumber}</span>
     </div>
   `;
 };
@@ -214,30 +206,30 @@ const renderLayerTable = (layer, layerIndex, monthLabel) => {
   );
 
   return `
-    <div style="margin-top:${layerIndex === 0 ? "0" : "14px"}; margin-bottom:18px;">
-      <div style="text-align:center; color:#1d4ed8; font-weight:700; font-size:11px; margin-bottom:6px;">
+    <div class="ck-layer" style="margin-top:${layerIndex === 0 ? "0" : "14px"};">
+      <div class="ck-layer-title">
         ${escapeHtml(monthLabel)} - Tanggal ${escapeHtml(layer.label)}
       </div>
       ${rowChunks
         .map((chunkRows, chunkIndex) => {
           const shouldPageBreak = chunkIndex > 0 || layerIndex > 0;
           return `
-            <div style="margin-top:${chunkIndex === 0 ? "0" : "8px"}; break-before:${
-              shouldPageBreak ? "page" : "auto"
-            }; page-break-before:${shouldPageBreak ? "always" : "auto"};">
-              <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px;">
+            <div class="ck-chunk ${shouldPageBreak ? "ck-chunk--page-break" : ""}" style="margin-top:${
+              chunkIndex === 0 ? "0" : "8px"
+            };">
+              <table class="ck-table">
                 <thead>
                   <tr>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:5%;">No</th>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:14%;">Job Type</th>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:14%;">Component</th>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:4%;">Picture</th>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:9%;">User</th>
-                    <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px; width:6%;">Shift</th>
+                    <th class="ck-head" style="width:5%;">No</th>
+                    <th class="ck-head" style="width:14%;">Job Type</th>
+                    <th class="ck-head" style="width:14%;">Component</th>
+                    <th class="ck-head" style="width:4%;">Picture</th>
+                    <th class="ck-head" style="width:9%;">User</th>
+                    <th class="ck-head" style="width:6%;">Shift</th>
                     ${Array.from({ length: dayCount }, (_, offset) => layer.startDay + offset)
                       .map(
                         (day) => `
-                          <th style="border:1px solid #000; background:#3bcd6b; color:#fff; font-weight:700; padding:2px 0; width:${dayColumnWidth};">
+                          <th class="ck-head-day" style="width:${dayColumnWidth};">
                             ${day}
                           </th>
                         `
@@ -250,21 +242,21 @@ const renderLayerTable = (layer, layerIndex, monthLabel) => {
                     .map(
                       (row) => `
                         <tr>
-                          <td style="border:1px solid #000; text-align:center; padding:2px;">
+                          <td class="ck-cell-center">
                             ${row.rowNumber}
                           </td>
-                          <td style="border:1px solid #000; text-align:center; padding:2px 4px;">
+                          <td class="ck-cell-padded">
                             ${escapeHtml(toDisplayText(row.jobType, "-"))}
                           </td>
-                          <td style="border:1px solid #000; text-align:center; padding:2px 4px;">
+                          <td class="ck-cell-padded">
                             ${escapeHtml(toDisplayText(row.component, "-"))}
                           </td>
-                          <td style="border:1px solid #000; text-align:center; padding:2px;">N/A</td>
-                          <td style="border:1px solid #000; text-align:left; padding:2px 4px; font-size:9px;">
+                          <td class="ck-cell-center">N/A</td>
+                          <td class="ck-user">
                             ${escapeHtml(toDisplayText(row.latestUser, "-"))}
                           </td>
-                          <td style="border:1px solid #000; padding:0;">
-                            <div style="display:flex; flex-direction:column;">
+                          <td class="ck-shift-col">
+                            <div class="ck-stack">
                               ${renderShiftBadge(1, row.shiftsSeen[1])}
                               ${renderShiftBadge(2, row.shiftsSeen[2])}
                               ${renderShiftBadge(3, row.shiftsSeen[3], true)}
@@ -273,7 +265,7 @@ const renderLayerTable = (layer, layerIndex, monthLabel) => {
                           ${row.dayCells
                             .map(
                               (daySlot) => `
-                                <td style="border:1px solid #000; padding:0;">
+                                <td class="ck-day-col">
                                   ${renderShiftSlot(daySlot[1], 1)}
                                   ${renderShiftSlot(daySlot[2], 2)}
                                   ${renderShiftSlot(daySlot[3], 3, true)}
@@ -408,15 +400,15 @@ const renderChecklistTableHtml = (rows = [], options = {}) => {
 
   if (layers.length === 0) {
     return `
-      <div style="margin-top:10px; border:1px solid #000; padding:16px; text-align:center; font-size:11px; font-style:italic; color:#555;">
+      <div class="ck-empty">
         Belum ada data checklist untuk bulan ini.
       </div>
     `;
   }
 
   return `
-    <div style="margin-top:8px;">
-      <div style="text-align:center; color:#1d4ed8; font-weight:700; font-size:18px; margin-bottom:4px;">
+    <div class="ck-wrap">
+      <div class="ck-title">
         CHECKLIST CILT
       </div>
       ${layers.map((layer, index) => renderLayerTable(layer, index, monthLabel)).join("")}

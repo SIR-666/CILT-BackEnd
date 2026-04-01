@@ -517,6 +517,140 @@ const V2_RENDERER_STYLES = `
     font-size: 10px;
     color: #1e3a8a;
   }
+  .ck-empty {
+    margin-top: 10px;
+    border: 1px solid #000;
+    padding: 16px;
+    text-align: center;
+    font-size: 11px;
+    font-style: italic;
+    color: #555;
+  }
+  .ck-wrap {
+    margin-top: 8px;
+  }
+  .ck-title {
+    text-align: center;
+    color: #1d4ed8;
+    font-weight: 700;
+    font-size: 18px;
+    margin-bottom: 4px;
+  }
+  .ck-layer {
+    margin-bottom: 18px;
+  }
+  .ck-layer-title {
+    text-align: center;
+    color: #1d4ed8;
+    font-weight: 700;
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .ck-chunk {
+    break-before: auto;
+    page-break-before: auto;
+  }
+  .ck-chunk--page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+  .ck-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 10px;
+  }
+  .ck-table th,
+  .ck-table td {
+    border: 1px solid #000;
+  }
+  .ck-head {
+    background: #3bcd6b;
+    color: #fff;
+    font-weight: 700;
+    padding: 2px;
+    text-align: center;
+  }
+  .ck-head-day {
+    background: #3bcd6b;
+    color: #fff;
+    font-weight: 700;
+    padding: 2px 0;
+    text-align: center;
+  }
+  .ck-cell-center {
+    text-align: center;
+    padding: 2px;
+  }
+  .ck-cell-padded {
+    text-align: center;
+    padding: 2px 4px;
+  }
+  .ck-user {
+    text-align: left;
+    padding: 2px 4px;
+    font-size: 9px;
+  }
+  .ck-shift-col,
+  .ck-day-col {
+    padding: 0 !important;
+  }
+  .ck-stack {
+    display: flex;
+    flex-direction: column;
+  }
+  .ck-slot {
+    position: relative;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.1;
+  }
+  .ck-slot--mid {
+    border-bottom: 1px solid #bfbfbf;
+  }
+  .ck-slot--faded {
+    opacity: 0.35;
+  }
+  .ck-slot--active {
+    opacity: 1;
+  }
+  .ck-slot-label {
+    position: absolute;
+    left: 2px;
+    top: 0;
+    font-size: 8px;
+    font-weight: 700;
+  }
+  .ck-badge {
+    font-weight: 700;
+  }
+  .ck-tone-ok {
+    background: #cff5d0;
+    color: #111827;
+  }
+  .ck-tone-not-ok {
+    background: #f8c9cc;
+    color: #111827;
+  }
+  .ck-tone-need {
+    background: #ffe9b0;
+    color: #111827;
+  }
+  .ck-tone-empty {
+    background: transparent;
+    color: #111827;
+  }
+  .ck-shift-1 {
+    background: #dbeafe;
+  }
+  .ck-shift-2 {
+    background: #dcfce7;
+  }
+  .ck-shift-3 {
+    background: #fef9c3;
+  }
 `;
 
 const escapeHtml = (value) =>
