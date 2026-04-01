@@ -26,6 +26,9 @@ const JOB_CLEANUP_INTERVAL_MS = Number(
 const JOB_TIMEOUT_MS = Number(process.env.CILT_PDF_JOB_TIMEOUT_MS || 10 * 60 * 1000);
 const MAX_SHEET_COUNT = Number(process.env.CILT_PDF_MAX_SHEETS || 500);
 const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24);
+const TARGET_CHUNK_HTML_CHARS = Number(
+  process.env.CILT_PDF_TARGET_CHUNK_HTML_CHARS || 3_000_000
+);
 const MAX_HTML_PAYLOAD_CHARS = Number(
   process.env.CILT_PDF_MAX_HTML_CHARS || 80_000_000
 );
@@ -485,12 +488,53 @@ const getSharedBrowser = async (chromium) => {
   return sharedBrowserPromise;
 };
 
-const splitIntoChunks = (items = [], chunkSize = MAX_SHEETS_PER_CHUNK) => {
+const splitIntoChunks = (
+  items = [],
+  {
+    chunkSize = MAX_SHEETS_PER_CHUNK,
+    targetHtmlChars = TARGET_CHUNK_HTML_CHARS,
+  } = {}
+) => {
+  const normalizedItems = Array.isArray(items) ? items : [];
   const normalizedChunkSize = Math.max(1, Number(chunkSize) || MAX_SHEETS_PER_CHUNK);
+  const normalizedTargetHtmlChars = Math.max(
+    1,
+    Number(targetHtmlChars) || TARGET_CHUNK_HTML_CHARS
+  );
   const chunks = [];
-  for (let index = 0; index < items.length; index += normalizedChunkSize) {
-    chunks.push(items.slice(index, index + normalizedChunkSize));
-  }
+  let currentSheets = [];
+  let currentHtmlChars = 0;
+  let currentOffset = 0;
+
+  const pushChunk = () => {
+    if (currentSheets.length === 0) return;
+    chunks.push({
+      offset: currentOffset,
+      limit: currentSheets.length,
+      sheets: currentSheets,
+      htmlChars: currentHtmlChars,
+    });
+    currentOffset += currentSheets.length;
+    currentSheets = [];
+    currentHtmlChars = 0;
+  };
+
+  normalizedItems.forEach((item) => {
+    const itemHtmlChars = String(item?.html || "").length;
+    const reachesSheetLimit = currentSheets.length >= normalizedChunkSize;
+    const exceedsHtmlTarget =
+      currentSheets.length > 0 &&
+      currentHtmlChars + itemHtmlChars > normalizedTargetHtmlChars;
+
+    if (reachesSheetLimit || exceedsHtmlTarget) {
+      pushChunk();
+    }
+
+    currentSheets.push(item);
+    currentHtmlChars += itemHtmlChars;
+  });
+
+  pushChunk();
   return chunks;
 };
 
@@ -909,7 +953,7 @@ const runJob = async (jobId) => {
       Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
     const renderMode = normalizeRenderMode(job.renderMode);
-    const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
+    const sheetChunks = splitIntoChunks(job.sheets, { chunkSize });
     renderWorkerCount = resolveRenderWorkerCount(sheetChunks.length);
 
     job.chunkSize = chunkSize;
@@ -924,7 +968,7 @@ const runJob = async (jobId) => {
 
     // eslint-disable-next-line no-console
     console.log(
-      `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}`
+      `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}`
     );
 
     let nextChunkIndex = 0;
@@ -948,9 +992,10 @@ const runJob = async (jobId) => {
           if (chunkIndex >= sheetChunks.length) return;
 
           ensureJobNotCancelled(job);
-          const chunkSheets = sheetChunks[chunkIndex];
+          const chunk = sheetChunks[chunkIndex];
+          const chunkSheets = chunk?.sheets || [];
           const chunkNumber = chunkIndex + 1;
-          const chunkOffset = chunkIndex * chunkSize;
+          const chunkOffset = Number(chunk?.offset) || 0;
           const chunkSummary = summarizeSheets(chunkSheets);
           const chunkPath = path.join(
             JOB_OUTPUT_DIR,
@@ -959,7 +1004,7 @@ const runJob = async (jobId) => {
           const printRouteUrl = buildPrintRouteUrl({
             job,
             offset: chunkOffset,
-            limit: chunkSheets.length,
+            limit: Number(chunk?.limit) || chunkSheets.length,
           });
 
           const progressStart =
@@ -971,7 +1016,11 @@ const runJob = async (jobId) => {
               : "Rendering PDF pages...";
           // eslint-disable-next-line no-console
           console.log(
-            `Chunk ${chunkNumber}/${sheetChunks.length} metadata: htmlChars=${chunkSummary.htmlChars}, maxSheetHtmlChars=${chunkSummary.maxSheetHtmlChars}, pageSizes=${chunkSummary.pageSizes}, sourceTypes=${chunkSummary.sourceTypes}, packageTypes=${chunkSummary.packageTypes}, itemIds=${chunkSummary.itemIds}`
+            `Chunk ${chunkNumber}/${sheetChunks.length} metadata: offset=${chunkOffset}, limit=${
+              Number(chunk?.limit) || chunkSheets.length
+            }, htmlChars=${chunkSummary.htmlChars}, maxSheetHtmlChars=${
+              chunkSummary.maxSheetHtmlChars
+            }, pageSizes=${chunkSummary.pageSizes}, sourceTypes=${chunkSummary.sourceTypes}, packageTypes=${chunkSummary.packageTypes}, itemIds=${chunkSummary.itemIds}`
           );
 
           const chunkTiming =
@@ -1369,7 +1418,10 @@ const prepareSheetsForJob = async (job) => {
 
   job.sheets = preparedSheets;
   job.totalSheets = preparedSheets.length;
-  job.totalChunks = Math.max(1, Math.ceil(preparedSheets.length / job.chunkSize));
+  const estimatedChunks = splitIntoChunks(preparedSheets, {
+    chunkSize: job.chunkSize,
+  });
+  job.totalChunks = Math.max(1, estimatedChunks.length);
   job.sourceItems = [];
   job.progress = Math.max(job.progress || 0, 10);
   job.message = `Prepared ${preparedSheets.length} printable pages.`;
@@ -1381,7 +1433,7 @@ const prepareSheetsForJob = async (job) => {
       ITEM_FETCH_CONCURRENCY_OVERRIDE || "-"
     }, cpu=${CPU_COUNT}) | htmlChars=${preparedSummary.htmlChars}, maxSheetHtmlChars=${
       preparedSummary.maxSheetHtmlChars
-    }, pageSizes=${preparedSummary.pageSizes}, sourceTypes=${preparedSummary.sourceTypes}, packageTypes=${preparedSummary.packageTypes}`
+    }, pageSizes=${preparedSummary.pageSizes}, sourceTypes=${preparedSummary.sourceTypes}, packageTypes=${preparedSummary.packageTypes}, estimatedChunks=${estimatedChunks.length}, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}`
   );
 
   return preparedSheets;
@@ -1422,6 +1474,14 @@ const createJobFromPreparedSheetsInternal = ({
   const resolvedPrintBaseUrl =
     normalizePrintBaseUrl(printBaseUrl) || normalizePrintBaseUrl(PRINT_BASE_URL);
   const totalSheets = hasPreparedSheets ? sanitizedSheets.length : normalizedSourceItems.length;
+  const estimatedChunkCount = hasPreparedSheets
+    ? Math.max(
+        1,
+        splitIntoChunks(sanitizedSheets, {
+          chunkSize: resolvedChunkSize,
+        }).length
+      )
+    : Math.max(1, Math.ceil(totalSheets / resolvedChunkSize));
   const job = {
     jobId,
     printToken: createJobToken(),
@@ -1438,7 +1498,7 @@ const createJobFromPreparedSheetsInternal = ({
     printBaseUrl: resolvedPrintBaseUrl,
     totalSheets,
     chunkSize: resolvedChunkSize,
-    totalChunks: Math.max(1, Math.ceil(totalSheets / resolvedChunkSize)),
+    totalChunks: estimatedChunkCount,
     processedChunks: 0,
     sourceItems: hasPreparedSheets ? [] : normalizedSourceItems,
     sheets: sanitizedSheets,
