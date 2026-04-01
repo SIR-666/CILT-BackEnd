@@ -297,21 +297,21 @@ const getResultColor = (result, good, reject) => {
   return "bg-gray-50 text-gray-600";
 };
 
-const resolveResultPaint = (value, row) => {
+const resolveResultClass = (value, row) => {
   if (!value || String(value).trim() === "-") {
-    return { background: "#f9fafb", color: "#9ca3af" };
+    return "prg-val-empty";
   }
   const token = getResultColor(value, row?.good, row?.reject);
   if (token.includes("bg-green-100")) {
-    return { background: "#d1fae5", color: "#065f46" };
+    return "prg-val-good";
   }
   if (token.includes("bg-yellow-100")) {
-    return { background: "#fef3c7", color: "#92400e" };
+    return "prg-val-need";
   }
   if (token.includes("bg-red-100")) {
-    return { background: "#fee2e2", color: "#991b1b" };
+    return "prg-val-reject";
   }
-  return { background: "#f3f4f6", color: "#374151" };
+  return "prg-val-default";
 };
 
 const normalizeActivityName = (value) =>
@@ -365,19 +365,19 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
       const related = actualTimes?.[hour] || actualTimes?.[String(hour)] || [];
       if (!Array.isArray(related) || related.length === 0) {
         return `
-          <th style="padding:5px 3px; border:1px solid #15803d; text-align:center; vertical-align:top;">
-            <span style="color:#bbf7d0;">-</span>
+          <th class="prg-actual-col">
+            <span class="prg-actual-empty">-</span>
           </th>
         `;
       }
 
       return `
-        <th style="padding:5px 3px; border:1px solid #15803d; text-align:center; vertical-align:top;">
-          <div style="display:flex; flex-direction:column; gap:2px;">
+        <th class="prg-actual-col">
+          <div class="prg-actual-stack">
             ${related
               .map(
                 (timeStr) => `
-                  <span style="display:inline-block; padding:1px 3px; border-radius:3px; background:#dcfce7; color:#166534; font-weight:700; font-size:9px;">
+                  <span class="prg-actual-badge">
                     ${escapeHtml(toDisplayText(timeStr, "-"))}
                   </span>
                 `
@@ -392,7 +392,7 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
   const renderHourHeaders = shiftHours
     .map(
       (hour) => `
-        <th style="width:70px; padding:6px 2px; border:1px solid #15803d; text-align:center;">
+        <th class="prg-h-hour">
           ${escapeHtml(String(hour).padStart(2, "0"))}:00
         </th>
       `
@@ -403,7 +403,7 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
     sortedRows.length === 0
       ? `
         <tr>
-          <td colspan="${5 + shiftHours.length}" style="border:1px solid #d1d5db; padding:16px 8px; text-align:center; color:#64748b; font-style:italic;">
+          <td class="prg-empty-row" colspan="${5 + shiftHours.length}">
             No inspection data available
           </td>
         </tr>
@@ -424,15 +424,15 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
                 if (isThirtyMinuteRow) {
                   const value1 = slot1 ? row.results30?.[slot1] ?? "" : "";
                   const value2 = slot2 ? row.results30?.[slot2] ?? "" : "";
-                  const paint1 = resolveResultPaint(value1, row);
-                  const paint2 = resolveResultPaint(value2, row);
+                  const className1 = resolveResultClass(value1, row);
+                  const className2 = resolveResultClass(value2, row);
                   return `
-                    <td style="border:1px solid #d1d5db; padding:0;">
-                      <div style="display:grid; grid-template-columns:1fr 1fr; min-height:30px;">
-                        <div style="border-right:1px solid #e5e7eb; text-align:center; padding:6px 2px; font-weight:700; background:${paint1.background}; color:${paint1.color};">
+                    <td class="prg-half-cell">
+                      <div class="prg-half-grid">
+                        <div class="prg-half prg-half-left ${className1}">
                           ${escapeHtml(toDisplayText(value1, "-"))}
                         </div>
-                        <div style="text-align:center; padding:6px 2px; font-weight:700; background:${paint2.background}; color:${paint2.color};">
+                        <div class="prg-half ${className2}">
                           ${escapeHtml(toDisplayText(value2, "-"))}
                         </div>
                       </div>
@@ -445,9 +445,9 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
                   row.results?.[Number(hour)] ??
                   row.results?.[`${hourLabel}:00`] ??
                   "";
-                const paint = resolveResultPaint(value, row);
+                const className = resolveResultClass(value, row);
                 return `
-                  <td style="border:1px solid #d1d5db; text-align:center; padding:6px 2px; font-weight:700; background:${paint.background}; color:${paint.color};">
+                  <td class="prg-val ${className}">
                     ${escapeHtml(toDisplayText(value, "-"))}
                   </td>
                 `;
@@ -455,23 +455,23 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
               .join("");
 
             return `
-              <tr style="background:${isStriped ? "#f8fafc" : "#fff"};">
-                <td style="border:1px solid #d1d5db; padding:6px 4px; text-align:center;">${rowIndex + 1}</td>
-                <td style="border:1px solid #d1d5db; padding:6px 6px; text-align:left; font-weight:600;">
+              <tr${isStriped ? ' class="prg-row-alt"' : ""}>
+                <td class="prg-static prg-no">${rowIndex + 1}</td>
+                <td class="prg-static prg-activity">
                   ${escapeHtml(toDisplayText(row.activity, "-"))}
                   ${
                     String(row?.periode || "").toLowerCase().includes("30")
-                      ? `<span style="margin-left:6px; display:inline-block; padding:1px 6px; border-radius:10px; background:#dbeafe; color:#1d4ed8; font-size:9px; font-weight:700;">30 Menit</span>`
+                      ? '<span class="prg-pill">30 Menit</span>'
                       : ""
                   }
                 </td>
-                <td style="border:1px solid #d1d5db; padding:6px 4px; text-align:center;">${escapeHtml(
+                <td class="prg-static prg-score">${escapeHtml(
                   toDisplayText(row.good, "-")
                 )}</td>
-                <td style="border:1px solid #d1d5db; padding:6px 4px; text-align:center;">${escapeHtml(
+                <td class="prg-static prg-score">${escapeHtml(
                   toDisplayText(row.need, "-")
                 )}</td>
-                <td style="border:1px solid #d1d5db; padding:6px 4px; text-align:center;">${escapeHtml(
+                <td class="prg-static prg-score">${escapeHtml(
                   toDisplayText(row.reject, "-")
                 )}</td>
                 ${hourCells}
@@ -481,37 +481,37 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
           .join("");
 
   return `
-    <div style="margin-top:8px;">
-      <div style="display:flex; justify-content:center; gap:18px; margin-bottom:8px; font-size:10px; color:#334155;">
-        <span style="display:inline-flex; align-items:center; gap:6px;">
-          <span style="width:12px; height:12px; border-radius:3px; border:1px solid #86efac; background:#dcfce7; display:inline-block;"></span>
+    <div class="prg-wrap">
+      <div class="prg-legend">
+        <span class="prg-legend-item">
+          <span class="prg-legend-swatch prg-legend-swatch--good"></span>
           Good (G)
         </span>
-        <span style="display:inline-flex; align-items:center; gap:6px;">
-          <span style="width:12px; height:12px; border-radius:3px; border:1px solid #fde68a; background:#fef3c7; display:inline-block;"></span>
+        <span class="prg-legend-item">
+          <span class="prg-legend-swatch prg-legend-swatch--need"></span>
           Need Attention (N)
         </span>
-        <span style="display:inline-flex; align-items:center; gap:6px;">
-          <span style="width:12px; height:12px; border-radius:3px; border:1px solid #fecaca; background:#fee2e2; display:inline-block;"></span>
+        <span class="prg-legend-item">
+          <span class="prg-legend-swatch prg-legend-swatch--reject"></span>
           Reject (R)
         </span>
       </div>
 
-      <div style="border:1px solid #16a34a; border-radius:8px; overflow:hidden;">
-        <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-size:10px; color:#0f172a;">
+      <div class="prg-panel">
+        <table class="prg-table">
           <thead>
-            <tr style="background:#16a34a; color:#fff;">
-              <th colspan="5" style="padding:8px 6px; border:1px solid #15803d; text-align:center; font-weight:700;">
+            <tr>
+              <th class="prg-h-actual" colspan="5">
                 Actual Time
               </th>
               ${renderActualTimeHeaders}
             </tr>
-            <tr style="background:#16a34a; color:#fff;">
-              <th style="width:44px; padding:6px 4px; border:1px solid #15803d; text-align:center;">No</th>
-              <th style="width:230px; padding:6px 6px; border:1px solid #15803d; text-align:left;">Activity</th>
-              <th style="width:80px; padding:6px 4px; border:1px solid #15803d; text-align:center;">G</th>
-              <th style="width:80px; padding:6px 4px; border:1px solid #15803d; text-align:center;">N</th>
-              <th style="width:80px; padding:6px 4px; border:1px solid #15803d; text-align:center;">R</th>
+            <tr>
+              <th class="prg-h-no">No</th>
+              <th class="prg-h-activity">Activity</th>
+              <th class="prg-h-score">G</th>
+              <th class="prg-h-score">N</th>
+              <th class="prg-h-score">R</th>
               ${renderHourHeaders}
             </tr>
           </thead>
@@ -521,9 +521,9 @@ const renderPerformaRedGreenDetailHtml = (record = {}, inspectionRows = null) =>
         </table>
       </div>
 
-      <div style="margin-top:10px; border:1px solid #bfdbfe; background:#eff6ff; border-radius:8px; padding:10px 12px;">
-        <div style="font-weight:700; color:#1d4ed8; margin-bottom:6px;">Summary</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:10px; color:#1e3a8a;">
+      <div class="prg-summary">
+        <div class="prg-summary-title">Summary</div>
+        <div class="prg-summary-grid">
           <div>Total Activities: ${sortedRows.length}</div>
           <div>Shift Hours: ${shiftHours.length} hours</div>
           <div>Total Records: 1</div>
