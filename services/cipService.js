@@ -1,5 +1,34 @@
 const sql = require("mssql");
 const getPool = require("../config/pool");
+const MAX_BATCH_ID_COUNT = 100;
+const CIP_REPORT_SELECT_SQL = `
+  SELECT 
+    id,
+    date,
+    process_order as processOrder,
+    plant,
+    line,
+    cip_type as cipType,
+    status,
+    operator,
+    posisi,
+    flow_rate as flowRate,
+    flow_rate_d as flowRateD,
+    flow_rate_bc as flowRateBC,
+    notes,
+    steps_data as stepsData,
+    special_records_data as specialRecordsData,
+    valve_data as valveData,
+    ISNULL(approval_coor, 0) as approval_coor,
+    ISNULL(approval_spv, 0) as approval_spv,
+    approval_coor_by,
+    approval_coor_at,
+    approval_spv_by,
+    approval_spv_at,
+    created_at as createdAt,
+    updated_at as updatedAt
+  FROM tb_cip_reports
+`;
 
 /**
  * CIP Service - JSON Storage Approach
@@ -110,6 +139,54 @@ async function getAllCIPReports(date, plant, line, processOrder, status, cipType
   }
 }
 
+function formatCIPReportRecord(report) {
+  if (!report) return null;
+
+  const isLineA = report.line === "LINE A";
+  const formattedReport = {
+    ...report,
+    steps: safeJsonParse(report.stepsData, []),
+    stepsData: undefined,
+    specialRecordsData: undefined,
+    valveData: undefined,
+  };
+
+  const specialData = safeJsonParse(report.specialRecordsData, []);
+  if (isLineA) {
+    formattedReport.copRecords = specialData;
+  } else {
+    formattedReport.specialRecords = specialData;
+    formattedReport.valvePositions = safeJsonParse(report.valveData, {
+      A: false,
+      B: false,
+      C: false,
+    });
+    formattedReport.flowRates = {
+      flowD: report.flowRateD,
+      flowBC: report.flowRateBC,
+    };
+  }
+
+  return formattedReport;
+}
+
+function buildIdBatches(ids = [], batchSize = MAX_BATCH_ID_COUNT) {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+    )
+  );
+
+  const batches = [];
+  for (let index = 0; index < normalizedIds.length; index += batchSize) {
+    batches.push(normalizedIds.slice(index, index + batchSize));
+  }
+  return batches;
+}
+
 async function getCIPReportById(id) {
   try {
     const pool = await getPool();
@@ -117,70 +194,49 @@ async function getCIPReportById(id) {
     const result = await pool
       .request()
       .input("id", sql.Int, id)
-      .query(`
-        SELECT 
-          id,
-          date,
-          process_order as processOrder,
-          plant,
-          line,
-          cip_type as cipType,
-          status,
-          operator,
-          posisi,
-          flow_rate as flowRate,
-          flow_rate_d as flowRateD,
-          flow_rate_bc as flowRateBC,
-          notes,
-          steps_data as stepsData,
-          special_records_data as specialRecordsData,
-          valve_data as valveData,
-          ISNULL(approval_coor, 0) as approval_coor,
-          ISNULL(approval_spv, 0) as approval_spv,
-          approval_coor_by,
-          approval_coor_at,
-          approval_spv_by,
-          approval_spv_at,
-          created_at as createdAt,
-          updated_at as updatedAt
-        FROM tb_cip_reports
-        WHERE id = @id
-      `);
+      .query(`${CIP_REPORT_SELECT_SQL} WHERE id = @id`);
 
     if (result.recordset.length === 0) {
       return null;
     }
 
-    const report = result.recordset[0];
-    const isLineA = report.line === 'LINE A';
-
-    // Parse JSON and format response
-    const formattedReport = {
-      ...report,
-      steps: safeJsonParse(report.stepsData, []),
-      // Remove raw JSON strings
-      stepsData: undefined,
-      specialRecordsData: undefined,
-      valveData: undefined,
-    };
-
-    // Add line-specific data
-    const specialData = safeJsonParse(report.specialRecordsData, []);
-
-    if (isLineA) {
-      formattedReport.copRecords = specialData;
-    } else {
-      formattedReport.specialRecords = specialData;
-      formattedReport.valvePositions = safeJsonParse(report.valveData, { A: false, B: false, C: false });
-      formattedReport.flowRates = {
-        flowD: report.flowRateD,
-        flowBC: report.flowRateBC
-      };
-    }
-
-    return formattedReport;
+    return formatCIPReportRecord(result.recordset[0]);
   } catch (error) {
     console.error("[getCIPReportById] Error:", error.message);
+    throw error;
+  }
+}
+
+async function getCIPReportsByIds(ids = []) {
+  try {
+    const batches = buildIdBatches(ids);
+    if (batches.length === 0) {
+      return new Map();
+    }
+
+    const pool = await getPool();
+    const batchResults = await Promise.all(
+      batches.map(async (batch, batchIndex) => {
+        const request = pool.request();
+        const placeholders = batch.map((id, idIndex) => {
+          const paramName = `id_${batchIndex}_${idIndex}`;
+          request.input(paramName, sql.Int, id);
+          return `@${paramName}`;
+        });
+
+        const result = await request.query(
+          `${CIP_REPORT_SELECT_SQL} WHERE id IN (${placeholders.join(", ")})`
+        );
+
+        return (Array.isArray(result.recordset) ? result.recordset : [])
+          .map((record) => formatCIPReportRecord(record))
+          .filter(Boolean);
+      })
+    );
+
+    return new Map(batchResults.flat().map((row) => [Number(row.id), row]));
+  } catch (error) {
+    console.error("[getCIPReportsByIds] Error:", error.message);
     throw error;
   }
 }
@@ -660,6 +716,7 @@ async function clearDraft(process_order, line) {
 module.exports = {
   getAllCIPReports,
   getCIPReportById,
+  getCIPReportsByIds,
   createCIPReport,
   createCIPReportWithCompliance,
   updateCIPReport,

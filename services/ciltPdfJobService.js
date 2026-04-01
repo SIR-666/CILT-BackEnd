@@ -8,7 +8,6 @@ const cipService = require("./cipService");
 const {
   V2_RENDERER_STYLES,
   dedupeV2Items,
-  fetchV2RecordByItem,
   buildV2SheetFromRecord,
 } = require("./ciltPdfRenderers");
 const PAGE_SIZE_CONFIG = {
@@ -45,6 +44,13 @@ const ITEM_FETCH_CONCURRENCY_OVERRIDE = (() => {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(1, Math.min(24, Math.floor(parsed)));
+})();
+const RENDER_CONCURRENCY_OVERRIDE = (() => {
+  const raw = String(process.env.CILT_PDF_RENDER_CONCURRENCY || "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(1, Math.min(4, Math.floor(parsed)));
 })();
 const BROWSER_IDLE_TTL_MS = Number(
   process.env.CILT_PDF_BROWSER_IDLE_TTL_MS || 2 * 60 * 1000
@@ -805,14 +811,20 @@ const runJob = async (jobId) => {
   const job = jobs.get(jobId);
   if (!job || job.status !== "queued") return;
 
-  let context = null;
-  let hasActiveContext = false;
   const chunkOutputPaths = [];
   try {
     ensureJobNotCancelled(job);
     job.status = "processing";
-    job.progress = 5;
+    job.progress = Math.max(job.progress || 0, 5);
     job.startedAt = nowIso();
+    job.message = "Preparing printable content...";
+
+    if ((!Array.isArray(job.sheets) || job.sheets.length === 0) && job.sourceItems?.length) {
+      await prepareSheetsForJob(job);
+      ensureJobNotCancelled(job);
+    }
+
+    job.progress = Math.max(job.progress || 0, 12);
     job.message = "Preparing renderer...";
 
     const chromium = getPlaywrightChromium();
@@ -825,85 +837,130 @@ const runJob = async (jobId) => {
     await ensureDir(JOB_OUTPUT_DIR);
 
     const browser = await getSharedBrowser(chromium);
-    context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-      deviceScaleFactor: 1,
-    });
-    activeRenderContexts += 1;
-    hasActiveContext = true;
-    const page = await context.newPage();
-
     const chunkSize = Math.max(
       1,
       Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
     const renderMode = normalizeRenderMode(job.renderMode);
     const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
+    const renderWorkerCount = resolveRenderWorkerCount(sheetChunks.length);
+
     job.chunkSize = chunkSize;
     job.renderMode = renderMode;
     job.totalChunks = sheetChunks.length;
     job.processedChunks = 0;
-    job.progress = 12;
+    job.progress = Math.max(job.progress || 0, 12);
     job.message =
       sheetChunks.length > 1
         ? `Chunking ${job.totalSheets} sheets into ${sheetChunks.length} parts...`
         : "Rendering PDF pages...";
 
-    for (let chunkIndex = 0; chunkIndex < sheetChunks.length; chunkIndex += 1) {
-      ensureJobNotCancelled(job);
-      const chunkSheets = sheetChunks[chunkIndex];
-      const chunkNumber = chunkIndex + 1;
-      const chunkOffset = chunkIndex * chunkSize;
-      const chunkPath = path.join(
-        JOB_OUTPUT_DIR,
-        `${job.jobId}.chunk-${String(chunkNumber).padStart(4, "0")}.pdf`
-      );
-      chunkOutputPaths.push(chunkPath);
-      const printRouteUrl = buildPrintRouteUrl({
-        job,
-        offset: chunkOffset,
-        limit: chunkSheets.length,
-      });
+    // eslint-disable-next-line no-console
+    console.log(
+      `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}`
+    );
 
-      const progressStart = 12 + Math.round((chunkIndex / sheetChunks.length) * 68);
-      job.progress = Math.max(job.progress, progressStart);
-      job.message =
-        sheetChunks.length > 1
-          ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
-          : "Rendering PDF pages...";
+    let nextChunkIndex = 0;
+    let firstRenderError = null;
+    const renderChunkWorker = async () => {
+      let workerContext = null;
+      try {
+        workerContext = await browser.newContext({
+          viewport: { width: 1440, height: 900 },
+          deviceScaleFactor: 1,
+        });
+        activeRenderContexts += 1;
+        const page = await workerContext.newPage();
 
-      const chunkTiming =
-        renderMode === "inline"
-          ? await renderInlineChunkToPdf({
-              page,
-              sheets: chunkSheets,
-              extraStyles: job.extraStyles,
-              outputPath: chunkPath,
-            })
-          : await renderSheetChunkToPdf({
-              page,
-              printRouteUrl,
-              sheets: chunkSheets,
-              extraStyles: job.extraStyles,
-              outputPath: chunkPath,
-            });
+        while (true) {
+          if (firstRenderError) return;
 
-      job.processedChunks = chunkNumber;
-      const progressEnd = 12 + Math.round((chunkNumber / sheetChunks.length) * 68);
-      job.progress = Math.max(job.progress, progressEnd);
-      const timingSummary = `mode=${chunkTiming.mode}, nav=${formatMs(chunkTiming.gotoMs)}, ready=${formatMs(
-        chunkTiming.readyMs
-      )}, font=${formatMs(chunkTiming.fontsMs)}, pdf=${formatMs(
-        chunkTiming.pdfMs
-      )}, total=${formatMs(chunkTiming.totalMs)}`;
-      job.message =
-        sheetChunks.length > 1
-          ? `Chunk ${chunkNumber}/${sheetChunks.length} completed (${timingSummary}).`
-          : `PDF pages rendered (${timingSummary}).`;
-      // eslint-disable-next-line no-console
-      console.log(
-        `Chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets): ${timingSummary}`
-      );
+          const chunkIndex = nextChunkIndex;
+          nextChunkIndex += 1;
+          if (chunkIndex >= sheetChunks.length) return;
+
+          ensureJobNotCancelled(job);
+          const chunkSheets = sheetChunks[chunkIndex];
+          const chunkNumber = chunkIndex + 1;
+          const chunkOffset = chunkIndex * chunkSize;
+          const chunkPath = path.join(
+            JOB_OUTPUT_DIR,
+            `${job.jobId}.chunk-${String(chunkNumber).padStart(4, "0")}.pdf`
+          );
+          const printRouteUrl = buildPrintRouteUrl({
+            job,
+            offset: chunkOffset,
+            limit: chunkSheets.length,
+          });
+
+          const progressStart =
+            12 + Math.round((job.processedChunks / sheetChunks.length) * 68);
+          job.progress = Math.max(job.progress, progressStart);
+          job.message =
+            sheetChunks.length > 1
+              ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
+              : "Rendering PDF pages...";
+
+          const chunkTiming =
+            renderMode === "inline"
+              ? await renderInlineChunkToPdf({
+                  page,
+                  sheets: chunkSheets,
+                  extraStyles: job.extraStyles,
+                  outputPath: chunkPath,
+                })
+              : await renderSheetChunkToPdf({
+                  page,
+                  printRouteUrl,
+                  sheets: chunkSheets,
+                  extraStyles: job.extraStyles,
+                  outputPath: chunkPath,
+                });
+
+          chunkOutputPaths[chunkIndex] = chunkPath;
+          job.processedChunks += 1;
+          const progressEnd =
+            12 + Math.round((job.processedChunks / sheetChunks.length) * 68);
+          job.progress = Math.max(job.progress, progressEnd);
+          const timingSummary = `mode=${chunkTiming.mode}, nav=${formatMs(
+            chunkTiming.gotoMs
+          )}, ready=${formatMs(chunkTiming.readyMs)}, font=${formatMs(
+            chunkTiming.fontsMs
+          )}, pdf=${formatMs(chunkTiming.pdfMs)}, total=${formatMs(
+            chunkTiming.totalMs
+          )}`;
+          job.message =
+            sheetChunks.length > 1
+              ? `Completed ${job.processedChunks}/${sheetChunks.length} chunks. Latest chunk ${chunkNumber}/${sheetChunks.length} (${timingSummary}).`
+              : `PDF pages rendered (${timingSummary}).`;
+          // eslint-disable-next-line no-console
+          console.log(
+            `Chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets): ${timingSummary}`
+          );
+        }
+      } catch (error) {
+        if (!firstRenderError) {
+          firstRenderError = error;
+        }
+      } finally {
+        if (workerContext) {
+          try {
+            await workerContext.close();
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(`CILT PDF context close error (${jobId}): ${error.message}`);
+          }
+          activeRenderContexts = Math.max(0, activeRenderContexts - 1);
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: renderWorkerCount }, () => renderChunkWorker())
+    );
+
+    if (firstRenderError) {
+      throw firstRenderError;
     }
 
     ensureJobNotCancelled(job);
@@ -914,10 +971,11 @@ const runJob = async (jobId) => {
         : "Finalizing PDF file...";
 
     const outputPath = path.join(JOB_OUTPUT_DIR, `${job.jobId}.pdf`);
-    await mergePdfFiles(chunkOutputPaths, outputPath);
+    await mergePdfFiles(chunkOutputPaths.filter(Boolean), outputPath);
 
     const stats = await fs.promises.stat(outputPath);
     job.sheets = [];
+    job.sourceItems = [];
     job.extraStyles = "";
     job.outputPath = outputPath;
     job.outputSize = stats.size;
@@ -949,6 +1007,7 @@ const runJob = async (jobId) => {
     }
   } finally {
     for (const chunkPath of chunkOutputPaths) {
+      if (!chunkPath) continue;
       try {
         await fs.promises.unlink(chunkPath);
       } catch (error) {
@@ -957,17 +1016,6 @@ const runJob = async (jobId) => {
           console.error(`CILT PDF temp cleanup error (${jobId}): ${error.message}`);
         }
       }
-    }
-    if (context) {
-      try {
-        await context.close();
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error(`CILT PDF context close error (${jobId}): ${error.message}`);
-      }
-    }
-    if (hasActiveContext) {
-      activeRenderContexts = Math.max(0, activeRenderContexts - 1);
     }
     scheduleSharedBrowserClose();
   }
@@ -1068,9 +1116,151 @@ const resolveItemFetchConcurrency = (itemCount = 0) => {
   );
 };
 
+const resolveRenderWorkerCount = (chunkCount = 0) => {
+  const normalizedChunkCount = Math.max(0, Number(chunkCount) || 0);
+  if (normalizedChunkCount <= 1) return 1;
+  if (RENDER_CONCURRENCY_OVERRIDE) {
+    return Math.min(RENDER_CONCURRENCY_OVERRIDE, normalizedChunkCount);
+  }
+
+  if (CPU_COUNT >= 6 && normalizedChunkCount >= 4) {
+    return 2;
+  }
+
+  return 1;
+};
+
+const loadRecordMapByIds = async ({
+  ids = [],
+  batchLoader,
+  singleLoader,
+  fetchConcurrency,
+}) => {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+    )
+  );
+
+  if (normalizedIds.length === 0) {
+    return new Map();
+  }
+
+  if (typeof batchLoader === "function") {
+    const loadedMap = await batchLoader(normalizedIds);
+    return loadedMap instanceof Map ? loadedMap : new Map();
+  }
+
+  const loadedEntries = await mapWithConcurrency(
+    normalizedIds,
+    async (id) => [id, await singleLoader(id)],
+    Math.min(fetchConcurrency, normalizedIds.length)
+  );
+  return new Map(loadedEntries.filter((entry) => entry?.[1]));
+};
+
+const prepareSheetsForJob = async (job) => {
+  const sourceItems = Array.isArray(job?.sourceItems) ? job.sourceItems : [];
+  if (sourceItems.length === 0) {
+    return Array.isArray(job?.sheets) ? job.sheets : [];
+  }
+
+  const fetchConcurrency = resolveItemFetchConcurrency(sourceItems.length);
+  job.progress = Math.max(job.progress || 0, 4);
+  job.message = `Preparing ${sourceItems.length} printable pages...`;
+
+  const ciltIds = [];
+  const cipIds = [];
+  sourceItems.forEach((item) => {
+    const itemId = Number(item?.id);
+    if (!Number.isFinite(itemId) || itemId <= 0) return;
+    if (String(item?.sourceType || "").trim().toUpperCase() === "CIP") {
+      cipIds.push(itemId);
+    } else {
+      ciltIds.push(itemId);
+    }
+  });
+
+  const [ciltRecordsById, cipRecordsById] = await Promise.all([
+    loadRecordMapByIds({
+      ids: ciltIds,
+      batchLoader:
+        typeof ciltService.getCILTsByIds === "function"
+          ? ciltService.getCILTsByIds.bind(ciltService)
+          : null,
+      singleLoader: (id) => ciltService.getCILT(id),
+      fetchConcurrency,
+    }),
+    loadRecordMapByIds({
+      ids: cipIds,
+      batchLoader:
+        typeof cipService.getCIPReportsByIds === "function"
+          ? cipService.getCIPReportsByIds.bind(cipService)
+          : null,
+      singleLoader: (id) => cipService.getCIPReportById(id),
+      fetchConcurrency,
+    }),
+  ]);
+
+  const preparedSheets = sanitizeSheets(
+    sourceItems
+      .map((item) => {
+        const itemId = Number(item?.id);
+        const sourceType =
+          String(item?.sourceType || "").trim().toUpperCase() === "CIP"
+            ? "CIP"
+            : "CILT";
+        const record =
+          sourceType === "CIP"
+            ? cipRecordsById.get(itemId)
+            : ciltRecordsById.get(itemId);
+
+        if (!record) {
+          throw new Error(`${sourceType} report id ${itemId} not found.`);
+        }
+
+        return buildV2SheetFromRecord({
+          packageType: sourceType === "CIP" ? "REPORT CIP" : record.packageType,
+          sourceType,
+          record,
+          headerMeta: item?.headerMeta,
+          normalizePageSize,
+        });
+      })
+      .filter(Boolean)
+  );
+
+  const validationError = validateSheetsPayload(preparedSheets);
+  if (validationError) {
+    const error = new Error(validationError);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  job.sheets = preparedSheets;
+  job.totalSheets = preparedSheets.length;
+  job.totalChunks = Math.max(1, Math.ceil(preparedSheets.length / job.chunkSize));
+  job.sourceItems = [];
+  job.progress = Math.max(job.progress || 0, 10);
+  job.message = `Prepared ${preparedSheets.length} printable pages.`;
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `Prepared ${preparedSheets.length} PDF sheets with fetchConcurrency=${fetchConcurrency} (override=${
+      ITEM_FETCH_CONCURRENCY_OVERRIDE || "-"
+    }, cpu=${CPU_COUNT})`
+  );
+
+  return preparedSheets;
+};
+
 const createJobFromPreparedSheetsInternal = ({
   fileName,
   sheets,
+  sourceItems = [],
   extraStyles = "",
   requestedBy,
   chunkSize,
@@ -1078,9 +1268,19 @@ const createJobFromPreparedSheetsInternal = ({
   renderMode,
   jobSource = "v2-items",
 }) => {
-  const validationError = validateSheetsPayload(sheets);
-  if (validationError) {
-    const error = new Error(validationError);
+  const normalizedSourceItems = dedupeV2Items(sourceItems);
+  const hasPreparedSheets = Array.isArray(sheets) && sheets.length > 0;
+  let sanitizedSheets = [];
+  if (hasPreparedSheets) {
+    const validationError = validateSheetsPayload(sheets);
+    if (validationError) {
+      const error = new Error(validationError);
+      error.statusCode = 400;
+      throw error;
+    }
+    sanitizedSheets = sanitizeSheets(sheets);
+  } else if (normalizedSourceItems.length === 0) {
+    const error = new Error("items is required and must contain valid id/sourceType entries.");
     error.statusCode = 400;
     throw error;
   }
@@ -1089,25 +1289,28 @@ const createJobFromPreparedSheetsInternal = ({
   const resolvedChunkSize = normalizeChunkSize(chunkSize);
   const requestedRenderMode = normalizeRenderMode(renderMode);
   const resolvedRenderMode = LOCKED_RENDER_MODE || requestedRenderMode;
-  const sanitizedSheets = sanitizeSheets(sheets);
   const resolvedPrintBaseUrl =
     normalizePrintBaseUrl(printBaseUrl) || normalizePrintBaseUrl(PRINT_BASE_URL);
+  const totalSheets = hasPreparedSheets ? sanitizedSheets.length : normalizedSourceItems.length;
   const job = {
     jobId,
     printToken: createJobToken(),
     status: "queued",
-    progress: 0,
-    message: "Job queued.",
+    progress: hasPreparedSheets ? 0 : 1,
+    message: hasPreparedSheets
+      ? "Job queued."
+      : `Job queued. Preparing ${totalSheets} printable pages...`,
     cancelRequested: false,
     fileName: sanitizeFileName(fileName, `cilt-export-${jobId}.pdf`),
     requestedBy: String(requestedBy || "").trim() || "unknown",
     jobSource: String(jobSource || "v2-items").trim() || "v2-items",
     renderMode: resolvedRenderMode,
     printBaseUrl: resolvedPrintBaseUrl,
-    totalSheets: sanitizedSheets.length,
+    totalSheets,
     chunkSize: resolvedChunkSize,
-    totalChunks: Math.max(1, Math.ceil(sanitizedSheets.length / resolvedChunkSize)),
+    totalChunks: Math.max(1, Math.ceil(totalSheets / resolvedChunkSize)),
     processedChunks: 0,
+    sourceItems: hasPreparedSheets ? [] : normalizedSourceItems,
     sheets: sanitizedSheets,
     extraStyles: String(extraStyles || ""),
     outputPath: null,
@@ -1120,11 +1323,11 @@ const createJobFromPreparedSheetsInternal = ({
 
   // eslint-disable-next-line no-console
   console.log(
-    `Job created ${jobId}: totalSheets=${sanitizedSheets.length}, requestedChunkSize=${String(
+    `Job created ${jobId}: totalSheets=${totalSheets}, requestedChunkSize=${String(
       chunkSize
     )}, resolvedChunkSize=${resolvedChunkSize}, requestedRenderMode=${requestedRenderMode}, resolvedRenderMode=${resolvedRenderMode}, lockRenderMode=${LOCKED_RENDER_MODE || "-"}, source=${job.jobSource}, printBase=${
       resolvedPrintBaseUrl || PRINT_BASE_URL
-    }`
+    }, deferredPreparation=${hasPreparedSheets ? "no" : "yes"}`
   );
 
   jobs.set(jobId, job);
@@ -1133,31 +1336,17 @@ const createJobFromPreparedSheetsInternal = ({
 };
 
 const buildSheetsFromItems = async (items = []) => {
-  const fetchConcurrency = resolveItemFetchConcurrency(items.length);
-  const loadedItems = await mapWithConcurrency(
-    items,
-    async (item) =>
-      fetchV2RecordByItem(item, {
-        ciltService,
-        cipService,
-      }),
-    fetchConcurrency
-  );
-
-  return loadedItems
-    .map((loaded, index) =>
-      buildV2SheetFromRecord({
-        packageType: loaded.packageType,
-        sourceType: loaded.sourceType,
-        record: loaded.record,
-        headerMeta: items[index]?.headerMeta,
-        normalizePageSize,
-      })
-    )
-    .filter(Boolean);
+  const tempJob = {
+    progress: 0,
+    message: "",
+    sourceItems: dedupeV2Items(items),
+    sheets: [],
+    chunkSize: MAX_SHEETS_PER_CHUNK,
+  };
+  return prepareSheetsForJob(tempJob);
 };
 
-const createJobFromItems = async ({
+const createJobFromItems = ({
   fileName,
   items,
   requestedBy,
@@ -1177,37 +1366,17 @@ const createJobFromItems = async ({
     throw error;
   }
 
-  let sheets = [];
   const resolvedFetchConcurrency = resolveItemFetchConcurrency(normalizedItems.length);
-
-  try {
-    sheets = await buildSheetsFromItems(normalizedItems);
-  } catch (error) {
-    const wrapped = new Error(
-      `Failed to prepare server-side PDF sheets: ${compactErrorMessage(error)}`
-    );
-    wrapped.statusCode =
-      Number(error?.statusCode) ||
-      (String(error?.message || "").toLowerCase().includes("not found") ? 404 : 500);
-    throw wrapped;
-  }
-
-  if (sheets.length === 0) {
-    const error = new Error("No printable sheets were generated from requested items.");
-    error.statusCode = 400;
-    throw error;
-  }
-
   const mergedExtraStyles = String(V2_RENDERER_STYLES || "");
   // eslint-disable-next-line no-console
   console.log(
-    `Preparing ${normalizedItems.length} items with fetchConcurrency=${resolvedFetchConcurrency} (override=${
+    `Queueing ${normalizedItems.length} items for PDF preparation with fetchConcurrency=${resolvedFetchConcurrency} (override=${
       ITEM_FETCH_CONCURRENCY_OVERRIDE || "-"
     }, cpu=${CPU_COUNT})`
   );
   return createJobFromPreparedSheetsInternal({
     fileName,
-    sheets,
+    sourceItems: normalizedItems,
     extraStyles: mergedExtraStyles,
     requestedBy,
     chunkSize,

@@ -3,6 +3,7 @@ const logger = require("../config/logger");
 const getPool = require("../config/pool");
 
 const APPROVER_ROLE_MARKER_REGEX = /\s*\[ROLE:[A-Z]+\]\s*$/i;
+const MAX_BATCH_ID_COUNT = 100;
 
 const normalizeApproverRoleTag = (value) => {
   const token = String(value || "")
@@ -156,6 +157,54 @@ async function getCILT(id) {
       .input("id", sql.Int, id)
       .query("SELECT * FROM tb_CILT WHERE id = @id");
     return result.recordset[0];
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+}
+
+function buildIdBatches(ids = [], batchSize = MAX_BATCH_ID_COUNT) {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+    )
+  );
+
+  const batches = [];
+  for (let index = 0; index < normalizedIds.length; index += batchSize) {
+    batches.push(normalizedIds.slice(index, index + batchSize));
+  }
+  return batches;
+}
+
+async function getCILTsByIds(ids = []) {
+  try {
+    const batches = buildIdBatches(ids);
+    if (batches.length === 0) {
+      return new Map();
+    }
+
+    const pool = await getPool();
+    const batchResults = await Promise.all(
+      batches.map(async (batch, batchIndex) => {
+        const request = pool.request();
+        const placeholders = batch.map((id, idIndex) => {
+          const paramName = `id_${batchIndex}_${idIndex}`;
+          request.input(paramName, sql.Int, id);
+          return `@${paramName}`;
+        });
+
+        const result = await request.query(
+          `SELECT * FROM tb_CILT WHERE id IN (${placeholders.join(", ")})`
+        );
+        return Array.isArray(result.recordset) ? result.recordset : [];
+      })
+    );
+
+    return new Map(batchResults.flat().map((row) => [Number(row.id), row]));
   } catch (error) {
     console.error(error);
     throw error;
@@ -597,6 +646,7 @@ async function getMasterPackage() {
 module.exports = {
   createCILT,
   getCILT,
+  getCILTsByIds,
   getAllCILT,
   updateCILT,
   deleteCILT,
