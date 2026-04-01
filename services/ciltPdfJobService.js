@@ -174,6 +174,7 @@ const toPublicJob = (job) => ({
   createdAt: job.createdAt,
   startedAt: job.startedAt || null,
   completedAt: job.completedAt || null,
+  metrics: job.metrics || null,
   error: job.error || null,
 });
 
@@ -190,6 +191,59 @@ const sanitizeSheets = (sheets = []) =>
     pageSize: normalizePageSize(sheet?.pageSize),
     html: stripScriptTags(sheet?.html || ""),
   }));
+
+const incrementSummaryCount = (bucket, key) => {
+  const normalizedKey = String(key || "").trim() || "UNKNOWN";
+  bucket.set(normalizedKey, (bucket.get(normalizedKey) || 0) + 1);
+};
+
+const formatSummaryCounts = (bucket) => {
+  if (!(bucket instanceof Map) || bucket.size === 0) return "-";
+  return Array.from(bucket.entries())
+    .sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1];
+      return String(left[0]).localeCompare(String(right[0]));
+    })
+    .map(([key, count]) => `${key}x${count}`)
+    .join("|");
+};
+
+const summarizeSheets = (sheets = []) => {
+  const normalizedSheets = Array.isArray(sheets) ? sheets : [];
+  const pageSizes = new Map();
+  const packageTypes = new Map();
+  const sourceTypes = new Map();
+  const itemIds = [];
+  let htmlChars = 0;
+  let maxSheetHtmlChars = 0;
+
+  for (const sheet of normalizedSheets) {
+    const htmlLength = String(sheet?.html || "").length;
+    htmlChars += htmlLength;
+    maxSheetHtmlChars = Math.max(maxSheetHtmlChars, htmlLength);
+    incrementSummaryCount(pageSizes, normalizePageSize(sheet?.pageSize));
+    incrementSummaryCount(packageTypes, sheet?.packageType || "UNKNOWN");
+    incrementSummaryCount(
+      sourceTypes,
+      String(sheet?.sourceType || "CILT").trim().toUpperCase() || "CILT"
+    );
+
+    const itemId = Number(sheet?.itemId);
+    if (Number.isFinite(itemId) && itemId > 0) {
+      itemIds.push(Math.floor(itemId));
+    }
+  }
+
+  return {
+    sheetCount: normalizedSheets.length,
+    htmlChars,
+    maxSheetHtmlChars,
+    pageSizes: formatSummaryCounts(pageSizes),
+    packageTypes: formatSummaryCounts(packageTypes),
+    sourceTypes: formatSummaryCounts(sourceTypes),
+    itemIds: itemIds.length > 0 ? itemIds.join(",") : "-",
+  };
+};
 
 const normalizeRenderMode = (value) => {
   const raw = String(value || "").trim().toLowerCase();
@@ -812,6 +866,11 @@ const runJob = async (jobId) => {
   if (!job || job.status !== "queued") return;
 
   const chunkOutputPaths = [];
+  const jobRunStartedAt = Date.now();
+  let prepareMs = 0;
+  let renderMs = 0;
+  let mergeMs = 0;
+  let renderWorkerCount = 1;
   try {
     ensureJobNotCancelled(job);
     job.status = "processing";
@@ -820,7 +879,15 @@ const runJob = async (jobId) => {
     job.message = "Preparing printable content...";
 
     if ((!Array.isArray(job.sheets) || job.sheets.length === 0) && job.sourceItems?.length) {
+      const prepareStartedAt = Date.now();
       await prepareSheetsForJob(job);
+      prepareMs = Date.now() - prepareStartedAt;
+      job.metrics = {
+        ...(job.metrics || {}),
+        prepareMs,
+      };
+      // eslint-disable-next-line no-console
+      console.log(`Job ${jobId} prepare stage: ${formatMs(prepareMs)}`);
       ensureJobNotCancelled(job);
     }
 
@@ -843,7 +910,7 @@ const runJob = async (jobId) => {
     );
     const renderMode = normalizeRenderMode(job.renderMode);
     const sheetChunks = splitIntoChunks(job.sheets, chunkSize);
-    const renderWorkerCount = resolveRenderWorkerCount(sheetChunks.length);
+    renderWorkerCount = resolveRenderWorkerCount(sheetChunks.length);
 
     job.chunkSize = chunkSize;
     job.renderMode = renderMode;
@@ -862,6 +929,7 @@ const runJob = async (jobId) => {
 
     let nextChunkIndex = 0;
     let firstRenderError = null;
+    const renderStartedAt = Date.now();
     const renderChunkWorker = async () => {
       let workerContext = null;
       try {
@@ -883,6 +951,7 @@ const runJob = async (jobId) => {
           const chunkSheets = sheetChunks[chunkIndex];
           const chunkNumber = chunkIndex + 1;
           const chunkOffset = chunkIndex * chunkSize;
+          const chunkSummary = summarizeSheets(chunkSheets);
           const chunkPath = path.join(
             JOB_OUTPUT_DIR,
             `${job.jobId}.chunk-${String(chunkNumber).padStart(4, "0")}.pdf`
@@ -900,6 +969,10 @@ const runJob = async (jobId) => {
             sheetChunks.length > 1
               ? `Rendering chunk ${chunkNumber}/${sheetChunks.length} (${chunkSheets.length} sheets)...`
               : "Rendering PDF pages...";
+          // eslint-disable-next-line no-console
+          console.log(
+            `Chunk ${chunkNumber}/${sheetChunks.length} metadata: htmlChars=${chunkSummary.htmlChars}, maxSheetHtmlChars=${chunkSummary.maxSheetHtmlChars}, pageSizes=${chunkSummary.pageSizes}, sourceTypes=${chunkSummary.sourceTypes}, packageTypes=${chunkSummary.packageTypes}, itemIds=${chunkSummary.itemIds}`
+          );
 
           const chunkTiming =
             renderMode === "inline"
@@ -962,6 +1035,14 @@ const runJob = async (jobId) => {
     if (firstRenderError) {
       throw firstRenderError;
     }
+    renderMs = Date.now() - renderStartedAt;
+    job.metrics = {
+      ...(job.metrics || {}),
+      prepareMs,
+      renderMs,
+    };
+    // eslint-disable-next-line no-console
+    console.log(`Job ${jobId} render stage: ${formatMs(renderMs)}`);
 
     ensureJobNotCancelled(job);
     job.progress = Math.max(job.progress, 85);
@@ -971,21 +1052,50 @@ const runJob = async (jobId) => {
         : "Finalizing PDF file...";
 
     const outputPath = path.join(JOB_OUTPUT_DIR, `${job.jobId}.pdf`);
+    const mergeStartedAt = Date.now();
     await mergePdfFiles(chunkOutputPaths.filter(Boolean), outputPath);
+    mergeMs = Date.now() - mergeStartedAt;
 
     const stats = await fs.promises.stat(outputPath);
+    const totalMs = Date.now() - jobRunStartedAt;
     job.sheets = [];
     job.sourceItems = [];
     job.extraStyles = "";
     job.outputPath = outputPath;
     job.outputSize = stats.size;
     job.chunkOutputCount = chunkOutputPaths.length;
+    job.metrics = {
+      ...(job.metrics || {}),
+      prepareMs,
+      renderMs,
+      mergeMs,
+      totalMs,
+      outputBytes: stats.size,
+      chunkCount: chunkOutputPaths.length,
+      fetchConcurrency: job.fetchConcurrency || null,
+      renderWorkerCount,
+    };
     job.status = "completed";
     job.progress = 100;
     job.message = "PDF is ready.";
     job.completedAt = nowIso();
     job.error = null;
+    // eslint-disable-next-line no-console
+    console.log(
+      `Job ${jobId} stage summary: prepare=${formatMs(prepareMs)}, render=${formatMs(
+        renderMs
+      )}, merge=${formatMs(mergeMs)}, total=${formatMs(totalMs)}, outputBytes=${stats.size}, chunkCount=${chunkOutputPaths.length}, fetchConcurrency=${job.fetchConcurrency || "-"}, renderWorkers=${renderWorkerCount}`
+    );
   } catch (error) {
+    job.metrics = {
+      ...(job.metrics || {}),
+      prepareMs,
+      renderMs,
+      mergeMs,
+      totalMs: Date.now() - jobRunStartedAt,
+      fetchConcurrency: job.fetchConcurrency || null,
+      renderWorkerCount,
+    };
     if (error?.code === "PDF_JOB_CANCELLED" || job?.cancelRequested) {
       job.status = "cancelled";
       job.progress = 100;
@@ -1173,6 +1283,7 @@ const prepareSheetsForJob = async (job) => {
   }
 
   const fetchConcurrency = resolveItemFetchConcurrency(sourceItems.length);
+  job.fetchConcurrency = fetchConcurrency;
   job.progress = Math.max(job.progress || 0, 4);
   job.message = `Preparing ${sourceItems.length} printable pages...`;
 
@@ -1226,13 +1337,25 @@ const prepareSheetsForJob = async (job) => {
           throw new Error(`${sourceType} report id ${itemId} not found.`);
         }
 
-        return buildV2SheetFromRecord({
+        const packageType =
+          sourceType === "CIP"
+            ? "REPORT CIP"
+            : String(record.packageType || "").trim() || "CILT REPORT";
+        const builtSheet = buildV2SheetFromRecord({
           packageType: sourceType === "CIP" ? "REPORT CIP" : record.packageType,
           sourceType,
           record,
           headerMeta: item?.headerMeta,
           normalizePageSize,
         });
+        return builtSheet
+          ? {
+              ...builtSheet,
+              itemId,
+              sourceType,
+              packageType,
+            }
+          : null;
       })
       .filter(Boolean)
   );
@@ -1250,12 +1373,15 @@ const prepareSheetsForJob = async (job) => {
   job.sourceItems = [];
   job.progress = Math.max(job.progress || 0, 10);
   job.message = `Prepared ${preparedSheets.length} printable pages.`;
+  const preparedSummary = summarizeSheets(preparedSheets);
 
   // eslint-disable-next-line no-console
   console.log(
     `Prepared ${preparedSheets.length} PDF sheets with fetchConcurrency=${fetchConcurrency} (override=${
       ITEM_FETCH_CONCURRENCY_OVERRIDE || "-"
-    }, cpu=${CPU_COUNT})`
+    }, cpu=${CPU_COUNT}) | htmlChars=${preparedSummary.htmlChars}, maxSheetHtmlChars=${
+      preparedSummary.maxSheetHtmlChars
+    }, pageSizes=${preparedSummary.pageSizes}, sourceTypes=${preparedSummary.sourceTypes}, packageTypes=${preparedSummary.packageTypes}`
   );
 
   return preparedSheets;
