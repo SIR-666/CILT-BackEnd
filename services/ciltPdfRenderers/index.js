@@ -1,5 +1,6 @@
 const {
   V2_RENDERER_STYLES,
+  compactHtmlFragment,
   escapeHtml,
   toDisplayText,
   parseJsonArray,
@@ -165,20 +166,20 @@ const buildV2SheetFromRecord = ({
 
   return {
     pageSize,
-    html: `
+    html: compactHtmlFragment(`
       <section class="cilt-print-sheet" data-page-size="${escapeHtml(
         pageSize
       )}" style="page:${escapeHtml(resolveSheetPageName(pageSize))};">
-        ${headerHtml}
+        ${compactHtmlFragment(headerHtml)}
         <div class="report-info">
           <p class="report-process-order"><strong>Process Order:</strong> ${escapeHtml(
             processOrder
           )}</p>
-          ${generalInfoHtml}
+          ${compactHtmlFragment(generalInfoHtml)}
         </div>
-        ${detailHtml}
+        ${compactHtmlFragment(detailHtml)}
       </section>
-    `,
+    `),
   };
 };
 

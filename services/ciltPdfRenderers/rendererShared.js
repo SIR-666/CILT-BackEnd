@@ -3,6 +3,12 @@ const path = require("path");
 
 const V2_HEADER_META_DEFAULTS = {};
 
+const compactHtmlFragment = (input = "") =>
+  String(input || "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/>\s+</g, "><")
+    .trim();
+
 const V2_PACKAGE_PAGE_SIZE_MAP = {
   SEGREGASI: "A4 landscape",
   "PEMAKAIAN SCREW CAP": "A4 portrait",
@@ -690,6 +696,7 @@ module.exports = {
   V2_HEADER_META_DEFAULTS,
   V2_PACKAGE_PAGE_SIZE_MAP,
   V2_RENDERER_STYLES,
+  compactHtmlFragment,
   escapeHtml,
   renderV2EmptyRow,
   renderV2EmptyBlock,
