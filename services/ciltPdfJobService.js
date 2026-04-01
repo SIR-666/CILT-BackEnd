@@ -29,6 +29,9 @@ const MAX_SHEETS_PER_CHUNK = Number(process.env.CILT_PDF_SHEETS_PER_CHUNK || 24)
 const TARGET_CHUNK_HTML_CHARS = Number(
   process.env.CILT_PDF_TARGET_CHUNK_HTML_CHARS || 3_000_000
 );
+const SINGLE_WORKER_MAX_CHUNK_HTML_CHARS = Number(
+  process.env.CILT_PDF_SINGLE_WORKER_MAX_CHUNK_HTML_CHARS || 4_200_000
+);
 const MAX_HTML_PAYLOAD_CHARS = Number(
   process.env.CILT_PDF_MAX_HTML_CHARS || 80_000_000
 );
@@ -54,6 +57,13 @@ const RENDER_CONCURRENCY_OVERRIDE = (() => {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(1, Math.min(4, Math.floor(parsed)));
+})();
+const SINGLE_WORKER_RENDER_CHUNK_SIZE_OVERRIDE = (() => {
+  const raw = String(process.env.CILT_PDF_SINGLE_WORKER_RENDER_CHUNK_SIZE || "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(1, Math.min(MAX_SHEETS_PER_CHUNK, Math.floor(parsed)));
 })();
 const BROWSER_IDLE_TTL_MS = Number(
   process.env.CILT_PDF_BROWSER_IDLE_TTL_MS || 2 * 60 * 1000
@@ -540,6 +550,55 @@ const splitIntoChunks = (
   return chunks;
 };
 
+const resolveSingleWorkerRenderChunkSize = (sheets = [], requestedChunkSize = MAX_SHEETS_PER_CHUNK) => {
+  const normalizedRequested = normalizeChunkSize(requestedChunkSize);
+  const requestedCandidate = Math.max(1, Math.min(normalizedRequested, MAX_SHEETS_PER_CHUNK));
+  const candidatePool = [
+    SINGLE_WORKER_RENDER_CHUNK_SIZE_OVERRIDE,
+    MAX_SHEETS_PER_CHUNK,
+    24,
+    20,
+    requestedCandidate,
+  ]
+    .map((candidate) => {
+      const parsed = Number(candidate);
+      if (!Number.isFinite(parsed)) return null;
+      return Math.max(1, Math.min(MAX_SHEETS_PER_CHUNK, Math.floor(parsed)));
+    })
+    .filter((candidate, index, source) => {
+      if (!Number.isFinite(candidate) || candidate < requestedCandidate) return false;
+      return source.indexOf(candidate) === index;
+    })
+    .sort((left, right) => right - left);
+
+  let selectedChunkSize = requestedCandidate;
+  let selectedChunkCount = splitIntoChunks(sheets, {
+    chunkSize: requestedCandidate,
+    balanceByHtml: false,
+  }).length;
+
+  for (const candidate of candidatePool) {
+    const chunks = splitIntoChunks(sheets, {
+      chunkSize: candidate,
+      balanceByHtml: false,
+    });
+    const maxChunkHtmlChars = chunks.reduce(
+      (maxValue, chunk) => Math.max(maxValue, Number(chunk?.htmlChars) || 0),
+      0
+    );
+    if (maxChunkHtmlChars <= SINGLE_WORKER_MAX_CHUNK_HTML_CHARS) {
+      selectedChunkSize = candidate;
+      selectedChunkCount = chunks.length;
+      break;
+    }
+  }
+
+  return {
+    chunkSize: selectedChunkSize,
+    chunkCount: selectedChunkCount,
+  };
+};
+
 const createCancelError = () => {
   const error = new Error("PDF job cancelled.");
   error.code = "PDF_JOB_CANCELLED";
@@ -950,25 +1009,38 @@ const runJob = async (jobId) => {
     await ensureDir(JOB_OUTPUT_DIR);
 
     const browser = await getSharedBrowser(chromium);
-    const chunkSize = Math.max(
+    const requestedChunkSize = Math.max(
       1,
       Math.min(Number(job.chunkSize) || MAX_SHEETS_PER_CHUNK, MAX_SHEETS_PER_CHUNK)
     );
     const renderMode = normalizeRenderMode(job.renderMode);
     const baseSheetChunks = splitIntoChunks(job.sheets, {
-      chunkSize,
+      chunkSize: requestedChunkSize,
       balanceByHtml: false,
     });
     renderWorkerCount = resolveRenderWorkerCount(baseSheetChunks.length);
+    const singleWorkerChunkResolution =
+      renderWorkerCount === 1
+        ? resolveSingleWorkerRenderChunkSize(job.sheets, requestedChunkSize)
+        : null;
+    const renderChunkSize =
+      singleWorkerChunkResolution?.chunkSize || requestedChunkSize;
+    const renderBaseChunks =
+      renderChunkSize === requestedChunkSize
+        ? baseSheetChunks
+        : splitIntoChunks(job.sheets, {
+            chunkSize: renderChunkSize,
+            balanceByHtml: false,
+          });
     const shouldBalanceChunksByHtml = renderWorkerCount > 1;
     const sheetChunks = shouldBalanceChunksByHtml
       ? splitIntoChunks(job.sheets, {
-          chunkSize,
+          chunkSize: renderChunkSize,
           balanceByHtml: true,
         })
-      : baseSheetChunks;
+      : renderBaseChunks;
 
-    job.chunkSize = chunkSize;
+    job.chunkSize = renderChunkSize;
     job.renderMode = renderMode;
     job.totalChunks = sheetChunks.length;
     job.processedChunks = 0;
@@ -982,7 +1054,7 @@ const runJob = async (jobId) => {
     console.log(
       `Rendering ${sheetChunks.length} chunk(s) with workerCount=${renderWorkerCount}, renderMode=${renderMode}, chunkStrategy=${
         shouldBalanceChunksByHtml ? "html-balanced" : "count-based"
-      }, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}`
+      }, requestedChunkSize=${requestedChunkSize}, renderChunkSize=${renderChunkSize}, targetChunkHtmlChars=${TARGET_CHUNK_HTML_CHARS}, singleWorkerMaxChunkHtmlChars=${SINGLE_WORKER_MAX_CHUNK_HTML_CHARS}`
     );
 
     let nextChunkIndex = 0;
@@ -1135,6 +1207,8 @@ const runJob = async (jobId) => {
       totalMs,
       outputBytes: stats.size,
       chunkCount: chunkOutputPaths.length,
+      requestedChunkSize,
+      renderChunkSize,
       fetchConcurrency: job.fetchConcurrency || null,
       renderWorkerCount,
     };
@@ -1147,7 +1221,7 @@ const runJob = async (jobId) => {
     console.log(
       `Job ${jobId} stage summary: prepare=${formatMs(prepareMs)}, render=${formatMs(
         renderMs
-      )}, merge=${formatMs(mergeMs)}, total=${formatMs(totalMs)}, outputBytes=${stats.size}, chunkCount=${chunkOutputPaths.length}, fetchConcurrency=${job.fetchConcurrency || "-"}, renderWorkers=${renderWorkerCount}`
+      )}, merge=${formatMs(mergeMs)}, total=${formatMs(totalMs)}, outputBytes=${stats.size}, chunkCount=${chunkOutputPaths.length}, requestedChunkSize=${requestedChunkSize}, renderChunkSize=${renderChunkSize}, fetchConcurrency=${job.fetchConcurrency || "-"}, renderWorkers=${renderWorkerCount}`
     );
   } catch (error) {
     job.metrics = {
