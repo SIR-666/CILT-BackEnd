@@ -1123,7 +1123,11 @@ const resolveRenderWorkerCount = (chunkCount = 0) => {
     return Math.min(RENDER_CONCURRENCY_OVERRIDE, normalizedChunkCount);
   }
 
-  if (CPU_COUNT >= 6 && normalizedChunkCount >= 4) {
+  if (CPU_COUNT <= 2) {
+    return 1;
+  }
+
+  if (normalizedChunkCount >= 4) {
     return 2;
   }
 
