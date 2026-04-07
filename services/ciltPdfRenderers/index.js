@@ -124,6 +124,7 @@ const buildV2SheetFromRecord = ({
   sourceType,
   record,
   headerMeta = {},
+  renderOptions = {},
   normalizePageSize,
 }) => {
   const normalizedPackageType = normalizePackageType(packageType);
@@ -143,12 +144,19 @@ const buildV2SheetFromRecord = ({
     ? parseJsonArray(record?.steps || record?.stepsData)
     : parseJsonArray(record?.inspectionData);
   const submittedBy = resolveSubmittedBy({ record, inspectionRows });
-  const headerHtml = renderV2ReportHeader({
-    title: reportTitle,
-    pageSize,
-    headerMeta: meta,
-    normalizePageSize,
-  });
+  const showHeader = renderOptions?.showHeader !== false;
+  const showReportInfo = renderOptions?.showReportInfo !== false;
+  const rawSectionTitle =
+    renderOptions?.sectionTitle == null ? "" : String(renderOptions.sectionTitle);
+  const sectionTitle = toDisplayText(rawSectionTitle, "");
+  const headerHtml = showHeader
+    ? renderV2ReportHeader({
+        title: reportTitle,
+        pageSize,
+        headerMeta: meta,
+        normalizePageSize,
+      })
+    : "";
   const generalInfoHtml = renderV2GeneralInfoTable({
     record,
     submittedBy,
@@ -163,6 +171,19 @@ const buildV2SheetFromRecord = ({
   const processOrder = isCipSource
     ? toDisplayText(record?.processOrder ?? record?.process_order, "")
     : toDisplayText(record?.processOrder, "");
+  const reportInfoHtml = showReportInfo
+    ? `
+        <div class="report-info">
+          <p class="report-process-order"><strong>Process Order:</strong> ${escapeHtml(
+            processOrder
+          )}</p>
+          ${compactHtmlFragment(generalInfoHtml)}
+        </div>
+      `
+    : "";
+  const sectionTitleHtml = sectionTitle
+    ? `<div class="section-title">${escapeHtml(sectionTitle)}</div>`
+    : "";
 
   return {
     pageSize,
@@ -171,12 +192,8 @@ const buildV2SheetFromRecord = ({
         pageSize
       )}" style="page:${escapeHtml(resolveSheetPageName(pageSize))};">
         ${compactHtmlFragment(headerHtml)}
-        <div class="report-info">
-          <p class="report-process-order"><strong>Process Order:</strong> ${escapeHtml(
-            processOrder
-          )}</p>
-          ${compactHtmlFragment(generalInfoHtml)}
-        </div>
+        ${compactHtmlFragment(reportInfoHtml)}
+        ${compactHtmlFragment(sectionTitleHtml)}
         ${compactHtmlFragment(detailHtml)}
       </section>
     `),

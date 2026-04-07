@@ -1466,36 +1466,53 @@ const prepareSheetsForJob = async (job) => {
     sourceItems
       .map((item) => {
         const itemId = Number(item?.id);
+        const hasValidId = Number.isFinite(itemId) && itemId > 0;
         const sourceType =
           String(item?.sourceType || "").trim().toUpperCase() === "CIP"
             ? "CIP"
             : "CILT";
-        const record =
-          sourceType === "CIP"
+        const placeholderRecord =
+          item?.placeholderRecord &&
+          typeof item.placeholderRecord === "object" &&
+          !Array.isArray(item.placeholderRecord)
+            ? item.placeholderRecord
+            : null;
+        const record = hasValidId
+          ? sourceType === "CIP"
             ? cipRecordsById.get(itemId)
-            : ciltRecordsById.get(itemId);
+            : ciltRecordsById.get(itemId)
+          : placeholderRecord;
 
         if (!record) {
-          throw new Error(`${sourceType} report id ${itemId} not found.`);
+          if (hasValidId) {
+            throw new Error(`${sourceType} report id ${itemId} not found.`);
+          }
+          throw new Error(
+            `${sourceType} placeholder item ${String(
+              item?.syntheticKey || item?.packageType || "-"
+            )} is invalid.`
+          );
         }
 
         const packageType =
           sourceType === "CIP"
             ? "REPORT CIP"
-            : String(record.packageType || "").trim() || "CILT REPORT";
+            : String(item?.packageType || record.packageType || "").trim() || "CILT REPORT";
         const builtSheet = buildV2SheetFromRecord({
-          packageType: sourceType === "CIP" ? "REPORT CIP" : record.packageType,
+          packageType: sourceType === "CIP" ? "REPORT CIP" : packageType,
           sourceType,
           record,
           headerMeta: item?.headerMeta,
+          renderOptions: item?.renderOptions,
           normalizePageSize,
         });
         return builtSheet
           ? {
               ...builtSheet,
-              itemId,
+              itemId: hasValidId ? itemId : null,
               sourceType,
               packageType,
+              syntheticKey: hasValidId ? null : String(item?.syntheticKey || "").trim(),
             }
           : null;
       })
@@ -1556,7 +1573,9 @@ const createJobFromPreparedSheetsInternal = ({
     }
     sanitizedSheets = sanitizeSheets(sheets);
   } else if (normalizedSourceItems.length === 0) {
-    const error = new Error("items is required and must contain valid id/sourceType entries.");
+    const error = new Error(
+      "items is required and must contain valid report ids or placeholder entries."
+    );
     error.statusCode = 400;
     throw error;
   }
@@ -1641,7 +1660,9 @@ const createJobFromItems = ({
 }) => {
   const normalizedItems = dedupeV2Items(items);
   if (normalizedItems.length === 0) {
-    const error = new Error("items is required and must contain valid id/sourceType entries.");
+    const error = new Error(
+      "items is required and must contain valid report ids or placeholder entries."
+    );
     error.statusCode = 400;
     throw error;
   }

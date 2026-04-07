@@ -15,6 +15,10 @@ router.get("/master/package", ciltController.getMasterPackage);
 // 2. Routes dengan nama spesifik (sebelum /:id)
 router.get("/with-filters", ciltController.getAllCILTWithFilters);
 router.get("/getCILTByProcessOrder", ciltController.getCILTByProcessOrder);
+router.get("/approval-groups", ciltController.getApprovalGroups);
+router.put("/approve-coordinator-batch", ciltController.approveByCoorBatch);
+router.put("/approve-supervisor-batch", ciltController.approveBySpvBatch);
+router.put("/reject-batch", ciltController.rejectCILTBatch);
 
 // 3. Routes dengan multiple parameters
 router.get(
@@ -25,6 +29,7 @@ router.get(
 // 4. Routes untuk approval (dengan /:id tapi spesifik)
 router.put("/approve-coordinator/:id", ciltController.approveByCoor);
 router.put("/approve-supervisor/:id", ciltController.approveBySpv);
+router.put("/reject/:id", ciltController.rejectCILT);
 router.get("/approval-status/:id", ciltController.getApprovalStatus);
 
 // 5. Generic routes

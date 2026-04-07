@@ -1172,21 +1172,50 @@ const dedupeV2Items = (items = []) => {
   const deduped = [];
   const seen = new Set();
   for (const rawItem of Array.isArray(items) ? items : []) {
-    const id = Number(rawItem?.id);
-    if (!Number.isFinite(id) || id <= 0) continue;
     const sourceType = normalizeSourceType(rawItem?.sourceType || rawItem?.source);
-    const key = `${sourceType}:${id}`;
+    const id = Number(rawItem?.id);
+    const hasValidId = Number.isFinite(id) && id > 0;
+    const syntheticKey = String(rawItem?.syntheticKey || "").trim();
+    const placeholderRecord =
+      rawItem?.placeholderRecord &&
+      typeof rawItem.placeholderRecord === "object" &&
+      !Array.isArray(rawItem.placeholderRecord)
+        ? rawItem.placeholderRecord
+        : null;
+
+    if (!hasValidId && !(syntheticKey && placeholderRecord)) continue;
+
+    const key = hasValidId
+      ? `${sourceType}:${id}`
+      : `${sourceType}:placeholder:${syntheticKey}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({
-      id: Math.floor(id),
+
+    const normalizedItem = {
       sourceType,
-      packageType: normalizePackageType(rawItem?.packageType),
+      packageType: normalizePackageType(
+        rawItem?.packageType || placeholderRecord?.packageType
+      ),
       headerMeta:
         rawItem?.headerMeta && typeof rawItem.headerMeta === "object"
           ? rawItem.headerMeta
           : {},
-    });
+      renderOptions:
+        rawItem?.renderOptions &&
+        typeof rawItem.renderOptions === "object" &&
+        !Array.isArray(rawItem.renderOptions)
+          ? rawItem.renderOptions
+          : {},
+    };
+
+    if (hasValidId) {
+      normalizedItem.id = Math.floor(id);
+    } else {
+      normalizedItem.syntheticKey = syntheticKey;
+      normalizedItem.placeholderRecord = placeholderRecord;
+    }
+
+    deduped.push(normalizedItem);
   }
   return deduped;
 };

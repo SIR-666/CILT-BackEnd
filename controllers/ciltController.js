@@ -14,6 +14,14 @@ const parseRoleId = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const normalizeApprovalLevel = (value) => {
+  const token = normalizeRoleToken(value);
+  if (!token) return null;
+  if (token.includes("COOR") || token.includes("COORD")) return "coor";
+  if (token.includes("SPV") || token.includes("SUPERVISOR")) return "spv";
+  return null;
+};
+
 const extractRoleMeta = (payload = {}) => {
   const rawRole = payload.roleId ?? payload.role ?? payload.userRoleId;
   const rawRoleName =
@@ -56,6 +64,14 @@ const canApproveSupervisor = (roleMeta) =>
   roleMeta.roleId === SUPERVISOR_ROLE_ID ||
   hasAnyRoleKeyword(roleMeta.roleName, ["SPV", "SUPERVISOR"]) ||
   isElevatedApprover(roleMeta);
+
+const resolveRequestedApprovalLevel = (payload = {}, roleMeta = {}) => {
+  const explicitLevel = normalizeApprovalLevel(payload.approvalLevel);
+  if (explicitLevel) return explicitLevel;
+  if (canApproveCoordinator(roleMeta) && !canApproveSupervisor(roleMeta)) return "coor";
+  if (canApproveSupervisor(roleMeta) && !canApproveCoordinator(roleMeta)) return "spv";
+  return null;
+};
 
 exports.createCILT = async (req, res) => {
   try {
@@ -234,6 +250,127 @@ exports.approveBySpv = async (req, res) => {
   }
 };
 
+exports.approveByCoorBatch = async (req, res) => {
+  try {
+    const { ids = [], username } = req.body || {};
+    const roleMeta = extractRoleMeta(req.body);
+    const approverRole = getApproverRoleTag(roleMeta, "COOR");
+
+    if (!canApproveCoordinator(roleMeta)) {
+      return res.status(403).json({ message: "Unauthorized: only Coordinator, PRF, or Manager can approve" });
+    }
+    if (!username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
+
+    const result = await ciltService.approveByCoorBatch(ids, username, {
+      approverRole,
+      requireApprovalGroup: true,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
+  }
+};
+
+exports.approveBySpvBatch = async (req, res) => {
+  try {
+    const { ids = [], username } = req.body || {};
+    const roleMeta = extractRoleMeta(req.body);
+    const bypassCoordinatorApproval = isElevatedApprover(roleMeta);
+    const approverRole = getApproverRoleTag(roleMeta, "SPV");
+
+    if (!canApproveSupervisor(roleMeta)) {
+      return res.status(403).json({ message: "Unauthorized: only Supervisor, PRF, or Manager can approve" });
+    }
+    if (!username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
+
+    const result = await ciltService.approveBySpvBatch(ids, username, {
+      bypassCoordinatorApproval,
+      approverRole,
+      requireApprovalGroup: true,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
+  }
+};
+
+exports.rejectCILT = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { username } = req.body || {};
+    const roleMeta = extractRoleMeta(req.body);
+    const approvalLevel = resolveRequestedApprovalLevel(req.body, roleMeta);
+    const approverRole = getApproverRoleTag(
+      roleMeta,
+      approvalLevel === "spv" ? "SPV" : "COOR"
+    );
+
+    if (!approvalLevel) {
+      return res.status(400).json({ message: "Approval level is required for rejection" });
+    }
+    if (
+      (approvalLevel === "coor" && !canApproveCoordinator(roleMeta)) ||
+      (approvalLevel === "spv" && !canApproveSupervisor(roleMeta))
+    ) {
+      return res.status(403).json({ message: "Unauthorized role for rejection" });
+    }
+    if (!username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
+
+    const result = await ciltService.rejectByIds([id], username, {
+      approvalLevel,
+      approverRole,
+      requireApprovalGroup: false,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
+  }
+};
+
+exports.rejectCILTBatch = async (req, res) => {
+  try {
+    const { ids = [], username } = req.body || {};
+    const roleMeta = extractRoleMeta(req.body);
+    const approvalLevel = resolveRequestedApprovalLevel(req.body, roleMeta);
+    const approverRole = getApproverRoleTag(
+      roleMeta,
+      approvalLevel === "spv" ? "SPV" : "COOR"
+    );
+
+    if (!approvalLevel) {
+      return res.status(400).json({ message: "Approval level is required for rejection" });
+    }
+    if (
+      (approvalLevel === "coor" && !canApproveCoordinator(roleMeta)) ||
+      (approvalLevel === "spv" && !canApproveSupervisor(roleMeta))
+    ) {
+      return res.status(403).json({ message: "Unauthorized role for rejection" });
+    }
+    if (!username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
+
+    const result = await ciltService.rejectByIds(ids, username, {
+      approvalLevel,
+      approverRole,
+      requireApprovalGroup: true,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({ message: error.message || "Internal server error" });
+  }
+};
+
 exports.getAllCILTWithFilters = async (req, res) => {
   try {
     const filters = {
@@ -253,6 +390,27 @@ exports.getAllCILTWithFilters = async (req, res) => {
     return res.status(500).json({
       message: "Internal server error",
       error: error.message
+    });
+  }
+};
+
+exports.getApprovalGroups = async (req, res) => {
+  try {
+    const filters = {
+      status: req.query.status,
+      plant: req.query.plant,
+      line: req.query.line,
+      shift: req.query.shift,
+      date: req.query.date,
+    };
+
+    const rows = await ciltService.getApprovalGroups(filters);
+    return res.status(200).json(rows || []);
+  } catch (error) {
+    console.error("Controller error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
     });
   }
 };

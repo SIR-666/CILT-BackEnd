@@ -1,6 +1,7 @@
 const sql = require("mssql");
 const logger = require("../config/logger");
 const getPool = require("../config/pool");
+const { buildApprovalListRows } = require("./ciltApprovalGroupUtils");
 
 const APPROVER_ROLE_MARKER_REGEX = /\s*\[ROLE:[A-Z]+\]\s*$/i;
 const MAX_BATCH_ID_COUNT = 100;
@@ -178,6 +179,137 @@ function buildIdBatches(ids = [], batchSize = MAX_BATCH_ID_COUNT) {
     batches.push(normalizedIds.slice(index, index + batchSize));
   }
   return batches;
+}
+
+function normalizeIdList(ids = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [ids])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.floor(value))
+    )
+  );
+}
+
+function buildIdPlaceholders(request, ids = [], prefix = "id") {
+  return ids.map((id, index) => {
+    const paramName = `${prefix}_${index}`;
+    request.input(paramName, sql.Int, id);
+    return `@${paramName}`;
+  });
+}
+
+function normalizeApprovalLevel(value) {
+  const token = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_-]+/g, "");
+  if (!token) return null;
+  if (token.includes("COOR") || token.includes("COORD")) return "coor";
+  if (token.includes("SPV") || token.includes("SUPERVISOR")) return "spv";
+  return null;
+}
+
+async function queryCiltRowsByFilters(filters = {}) {
+  const pool = await getPool();
+  let query = `
+    SELECT
+      *,
+      approval_coor,
+      approval_coor_by,
+      approval_coor_at,
+      approval_spv,
+      approval_spv_by,
+      approval_spv_at,
+      approval
+    FROM tb_CILT
+    WHERE 1=1
+  `;
+  const request = pool.request();
+
+  if (filters.status !== undefined) {
+    query += " AND status = @status";
+    request.input("status", sql.Int, parseInt(filters.status));
+  }
+  if (filters.plant) {
+    query += " AND plant = @plant";
+    request.input("plant", sql.VarChar, filters.plant);
+  }
+  if (filters.line) {
+    query += " AND line = @line";
+    request.input("line", sql.VarChar, filters.line);
+  }
+  if (filters.shift) {
+    query += " AND shift = @shift";
+    request.input("shift", sql.VarChar, filters.shift);
+  }
+  if (filters.date) {
+    query += " AND CONVERT(VARCHAR, date, 23) = @date";
+    request.input("date", sql.VarChar, filters.date);
+  }
+
+  query += " ORDER BY id DESC";
+
+  const result = await request.query(query);
+  return result.recordset || [];
+}
+
+async function queryCiltApprovalStatesByIds(transaction, ids = []) {
+  const request = transaction.request();
+  const placeholders = buildIdPlaceholders(request, ids, "state_id");
+  const result = await request.query(`
+    SELECT
+      id,
+      ISNULL(approval_coor, 0) AS approval_coor,
+      approval_coor_by,
+      approval_coor_at,
+      ISNULL(approval_spv, 0) AS approval_spv,
+      approval_spv_by,
+      approval_spv_at,
+      ISNULL(approval, 0) AS approval
+    FROM tb_CILT
+    WHERE id IN (${placeholders.join(", ")})
+  `);
+  return Array.isArray(result.recordset) ? result.recordset : [];
+}
+
+async function ensureExistingIds(transaction, ids = []) {
+  const stateRows = await queryCiltApprovalStatesByIds(transaction, ids);
+  const existingIds = new Set(stateRows.map((row) => Number(row.id)));
+  const missingIds = ids.filter((id) => !existingIds.has(id));
+  if (missingIds.length > 0) {
+    throw new Error(`CILT record not found for id(s): ${missingIds.join(", ")}`);
+  }
+  return stateRows;
+}
+
+async function ensureCompleteApprovalGroupIds(ids = []) {
+  const normalizedIds = normalizeIdList(ids);
+  if (normalizedIds.length === 0) {
+    throw new Error("ids is required.");
+  }
+
+  const rowsMap = await getCILTsByIds(normalizedIds);
+  const rows = normalizedIds.map((id) => rowsMap.get(id)).filter(Boolean);
+  if (rows.length !== normalizedIds.length) {
+    throw new Error("Some CILT bundle items were not found.");
+  }
+
+  const approvalRows = buildApprovalListRows(rows);
+  if (approvalRows.length !== 1 || approvalRows[0]?.isApprovalGroup !== true) {
+    throw new Error("Selected ids do not form a valid CILT approval bundle.");
+  }
+
+  const groupedIds = normalizeIdList(approvalRows[0].childIds);
+  if (
+    groupedIds.length !== normalizedIds.length ||
+    groupedIds.some((id) => !normalizedIds.includes(id))
+  ) {
+    throw new Error("Selected ids do not match the resolved CILT approval bundle.");
+  }
+
+  return rows;
 }
 
 async function getCILTsByIds(ids = []) {
@@ -536,49 +668,234 @@ async function approveBySpv(id, username, options = {}) {
 
 async function getAllCILTWithFilters(filters) {
   try {
-    const pool = await getPool();
-    let query = `
-      SELECT 
-        *,
-        approval_coor,
-        approval_coor_by,
-        approval_coor_at,
-        approval_spv,
-        approval_spv_by,
-        approval_spv_at,
-        approval
-      FROM tb_CILT 
-      WHERE 1=1
-    `;
-    const request = pool.request();
-
-    if (filters.status !== undefined) {
-      query += " AND status = @status";
-      request.input("status", sql.Int, parseInt(filters.status));
-    }
-    if (filters.plant) {
-      query += " AND plant = @plant";
-      request.input("plant", sql.VarChar, filters.plant);
-    }
-    if (filters.line) {
-      query += " AND line = @line";
-      request.input("line", sql.VarChar, filters.line);
-    }
-    if (filters.shift) {
-      query += " AND shift = @shift";
-      request.input("shift", sql.VarChar, filters.shift);
-    }
-    if (filters.date) {
-      query += " AND CONVERT(VARCHAR, date, 23) = @date";
-      request.input("date", sql.VarChar, filters.date);
-    }
-
-    query += " ORDER BY id DESC";
-
-    const result = await request.query(query);
-    return result.recordset;
+    return await queryCiltRowsByFilters(filters);
   } catch (error) {
     console.error("Error fetching CILT with filters:", error);
+    throw error;
+  }
+}
+
+async function getApprovalGroups(filters = {}) {
+  try {
+    const rows = await queryCiltRowsByFilters(filters);
+    return buildApprovalListRows(rows);
+  } catch (error) {
+    console.error("Error fetching CILT approval groups:", error);
+    throw error;
+  }
+}
+
+async function approveByCoorBatch(ids = [], username, options = {}) {
+  let transaction;
+  try {
+    const normalizedIds = normalizeIdList(ids);
+    if (normalizedIds.length === 0) {
+      throw new Error("ids is required.");
+    }
+
+    if (options.requireApprovalGroup !== false) {
+      await ensureCompleteApprovalGroupIds(normalizedIds);
+    }
+
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+    await ensureExistingIds(transaction, normalizedIds);
+
+    const request = transaction.request();
+    const placeholders = buildIdPlaceholders(request, normalizedIds, "approve_coor_id");
+    const formattedUsername = formatApproverUsername(username, options.approverRole);
+
+    request.input("username", sql.VarChar, formattedUsername);
+    const result = await request.query(`
+      UPDATE tb_CILT
+      SET
+        approval_coor = 1,
+        approval_coor_by = @username,
+        approval_coor_at = GETDATE(),
+        updatedAt = GETDATE()
+      WHERE id IN (${placeholders.join(", ")})
+    `);
+
+    await transaction.commit();
+    return {
+      success: true,
+      message: "Approved by Coordinator",
+      ids: normalizedIds,
+      rowsAffected: result.rowsAffected[0] || 0,
+    };
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Error rolling back coordinator batch approval:", rollbackError);
+      }
+    }
+    console.error("Error approving CILT batch by coordinator:", error);
+    throw error;
+  }
+}
+
+async function approveBySpvBatch(ids = [], username, options = {}) {
+  let transaction;
+  try {
+    const normalizedIds = normalizeIdList(ids);
+    if (normalizedIds.length === 0) {
+      throw new Error("ids is required.");
+    }
+
+    if (options.requireApprovalGroup !== false) {
+      await ensureCompleteApprovalGroupIds(normalizedIds);
+    }
+
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+    const stateRows = await ensureExistingIds(transaction, normalizedIds);
+    const bypassCoordinatorApproval = options.bypassCoordinatorApproval === true;
+
+    if (
+      !bypassCoordinatorApproval &&
+      stateRows.some((row) => Number(row.approval_coor) !== 1)
+    ) {
+      throw new Error("Waiting for Coordinator approval first");
+    }
+
+    const request = transaction.request();
+    const placeholders = buildIdPlaceholders(request, normalizedIds, "approve_spv_id");
+    const formattedUsername = formatApproverUsername(username, options.approverRole);
+
+    request.input("username", sql.VarChar, formattedUsername);
+    request.input(
+      "autoApproveCoordinator",
+      sql.Int,
+      bypassCoordinatorApproval ? 1 : 0
+    );
+    const result = await request.query(`
+      UPDATE tb_CILT
+      SET
+        approval_spv = 1,
+        approval_spv_by = @username,
+        approval_spv_at = GETDATE(),
+        approval_coor = CASE
+          WHEN @autoApproveCoordinator = 1 AND ISNULL(approval_coor, 0) <> 1 THEN 1
+          ELSE approval_coor
+        END,
+        approval_coor_by = CASE
+          WHEN @autoApproveCoordinator = 1 AND ISNULL(approval_coor, 0) <> 1 THEN @username
+          ELSE approval_coor_by
+        END,
+        approval_coor_at = CASE
+          WHEN @autoApproveCoordinator = 1 AND ISNULL(approval_coor, 0) <> 1 THEN GETDATE()
+          ELSE approval_coor_at
+        END,
+        approval = 1,
+        updatedAt = GETDATE()
+      WHERE id IN (${placeholders.join(", ")})
+    `);
+
+    await transaction.commit();
+    return {
+      success: true,
+      message:
+        bypassCoordinatorApproval
+          ? "Approved by Supervisor (Coordinator auto-approved)"
+          : "Approved by Supervisor",
+      ids: normalizedIds,
+      rowsAffected: result.rowsAffected[0] || 0,
+    };
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Error rolling back supervisor batch approval:", rollbackError);
+      }
+    }
+    console.error("Error approving CILT batch by supervisor:", error);
+    throw error;
+  }
+}
+
+async function rejectByIds(ids = [], username, options = {}) {
+  let transaction;
+  try {
+    const normalizedIds = normalizeIdList(ids);
+    if (normalizedIds.length === 0) {
+      throw new Error("ids is required.");
+    }
+
+    if (options.requireApprovalGroup === true) {
+      await ensureCompleteApprovalGroupIds(normalizedIds);
+    }
+
+    const approvalLevel = normalizeApprovalLevel(options.approvalLevel);
+    if (!approvalLevel) {
+      throw new Error("Approval level is required for rejection.");
+    }
+
+    const pool = await getPool();
+    transaction = pool.transaction();
+    await transaction.begin();
+    const stateRows = await ensureExistingIds(transaction, normalizedIds);
+
+    if (
+      approvalLevel === "spv" &&
+      stateRows.some((row) => Number(row.approval_coor) !== 1)
+    ) {
+      throw new Error("Waiting for Coordinator approval first");
+    }
+
+    const request = transaction.request();
+    const placeholders = buildIdPlaceholders(request, normalizedIds, "reject_id");
+    const formattedUsername = formatApproverUsername(username, options.approverRole);
+    request.input("username", sql.VarChar, formattedUsername);
+
+    const query =
+      approvalLevel === "spv"
+        ? `
+          UPDATE tb_CILT
+          SET
+            approval_spv = 2,
+            approval_spv_by = @username,
+            approval_spv_at = GETDATE(),
+            approval = 2,
+            updatedAt = GETDATE()
+          WHERE id IN (${placeholders.join(", ")})
+        `
+        : `
+          UPDATE tb_CILT
+          SET
+            approval_coor = 2,
+            approval_coor_by = @username,
+            approval_coor_at = GETDATE(),
+            approval = 2,
+            updatedAt = GETDATE()
+          WHERE id IN (${placeholders.join(", ")})
+        `;
+
+    const result = await request.query(query);
+    await transaction.commit();
+    return {
+      success: true,
+      message:
+        approvalLevel === "spv"
+          ? "Rejected by Supervisor"
+          : "Rejected by Coordinator",
+      ids: normalizedIds,
+      rowsAffected: result.rowsAffected[0] || 0,
+      approvalLevel,
+    };
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error("Error rolling back CILT rejection batch:", rollbackError);
+      }
+    }
+    console.error("Error rejecting CILT batch:", error);
     throw error;
   }
 }
@@ -657,6 +974,10 @@ module.exports = {
   approveByCoor,
   approveBySpv,
   getAllCILTWithFilters,
+  getApprovalGroups,
+  approveByCoorBatch,
+  approveBySpvBatch,
+  rejectByIds,
   getApprovalStatus,
   getMasterPlant,
   getMasterLine,

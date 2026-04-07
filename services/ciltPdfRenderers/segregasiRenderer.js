@@ -1,4 +1,4 @@
-const { escapeHtml, renderV2EmptyBlock, toDisplayText } = require("./rendererShared");
+const { escapeHtml, toDisplayText } = require("./rendererShared");
 
 const hasMeaningfulValue = (value) => {
   if (value === null || value === undefined) return false;
@@ -164,6 +164,18 @@ const renderSegregasiCard = (row = {}, index = 0) => {
   `;
 };
 
+const renderBlankSegregasiDetailHtml = () => `
+  <div class="sg-wrap">
+    <div class="sg-page">
+      <div class="sg-grid" style="grid-template-columns:repeat(1, minmax(0, 1fr));">
+        <div class="sg-col">
+          ${renderSegregasiCard({}, 0)}
+        </div>
+      </div>
+    </div>
+  </div>
+`;
+
 const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
   const sourceRows =
     inspectionRows && Array.isArray(inspectionRows)
@@ -172,7 +184,7 @@ const renderSegregasiDetailHtml = (record = {}, inspectionRows = null) => {
   const rows = mergeSegregasiRows(record, sourceRows);
 
   if (rows.length === 0) {
-    return renderV2EmptyBlock();
+    return renderBlankSegregasiDetailHtml();
   }
 
   const pageGroups = [];
